@@ -1,5 +1,6 @@
 ﻿import React, { useState, useEffect, useRef, useMemo, useCallback } from 'react';
 import qrcodeGenerator from 'qrcode-generator';
+import { supabase } from './supabase.js';
 
 // =====================================
 // 街中スナック プラットフォーム Phase 1
@@ -297,112 +298,86 @@ function usePosts() {
     return Object.values(map).sort((a, b) => b.timestamp - a.timestamp);
   });
 
-  // 削除済みIDの墓場（同期時に復活させない）
-  const deletedIdsRef = useRef(new Set(safeLoad('mn_deleted_posts') || []));
-  const saveDeleted = () => {
-    try { safeSave('mn_deleted_posts', Array.from(deletedIdsRef.current)); } catch {}
+  const setFromMap = (map) => {
+    safeSave(KEYS.posts, map);
+    setPosts(Object.values(map).sort((a, b) => b.timestamp - a.timestamp));
   };
 
-  // クラウド→ローカルへの同期（読み込みのみ）
+  // Supabase：初回全件取得 + リアルタイム購読
   useEffect(() => {
+    if (!supabase) return;
     let mounted = true;
-    const sync = async () => {
-      if (typeof window === 'undefined' || !window.storage) return;
-      try {
-        const result = await window.storage.list('posts:', true);
-        if (!result?.keys || !mounted) return;
-        const cloudMap = {};
-        for (const key of result.keys) {
-          // 削除済みIDはスキップ＋クラウドからも消す
-          const id = key.startsWith('posts:') ? key.slice(6) : key;
-          if (deletedIdsRef.current.has(id)) {
-            window.storage.delete(key, true).catch(() => {});
-            continue;
-          }
-          try {
-            const r = await window.storage.get(key, true);
-            if (r) {
-              const p = JSON.parse(r.value);
-              if (p?.id && !deletedIdsRef.current.has(p.id)) cloudMap[p.id] = p;
-            }
-          } catch {}
-        }
-        if (!mounted) return;
-        const localMap = safeLoad(KEYS.posts) || {};
-        // 削除済みIDは除外してマージ
-        const merged = {};
-        for (const id in cloudMap) if (!deletedIdsRef.current.has(id)) merged[id] = cloudMap[id];
-        for (const id in localMap) if (!deletedIdsRef.current.has(id)) merged[id] = localMap[id];
-        safeSave(KEYS.posts, merged);
-        setPosts(Object.values(merged).sort((a, b) => b.timestamp - a.timestamp));
-      } catch {}
+
+    // 全件取得してlocalStorageとマージ
+    supabase.from('posts').select('data').then(({ data, error }) => {
+      if (!mounted || error || !data) return;
+      const map = safeLoad(KEYS.posts) || {};
+      data.forEach(row => { if (row.data?.id) map[row.data.id] = row.data; });
+      if (mounted) setFromMap(map);
+    });
+
+    // リアルタイム購読（お客様が投稿したら即反映）
+    const channel = supabase.channel('posts-realtime')
+      .on('postgres_changes', { event: 'INSERT', schema: 'public', table: 'posts' }, ({ new: row }) => {
+        if (!mounted || !row?.data?.id) return;
+        const map = safeLoad(KEYS.posts) || {};
+        map[row.data.id] = row.data;
+        setFromMap(map);
+      })
+      .on('postgres_changes', { event: 'UPDATE', schema: 'public', table: 'posts' }, ({ new: row }) => {
+        if (!mounted || !row?.data?.id) return;
+        const map = safeLoad(KEYS.posts) || {};
+        map[row.data.id] = row.data;
+        setFromMap(map);
+      })
+      .on('postgres_changes', { event: 'DELETE', schema: 'public', table: 'posts' }, ({ old: row }) => {
+        if (!mounted || !row?.id) return;
+        const map = safeLoad(KEYS.posts) || {};
+        delete map[row.id];
+        setFromMap(map);
+      })
+      .subscribe();
+
+    return () => {
+      mounted = false;
+      supabase.removeChannel(channel);
     };
-    sync();
-    const t = setInterval(sync, 5000);
-    return () => { mounted = false; clearInterval(t); };
   }, []);
 
   const addPost = useCallback((post) => {
-    // 万一同じIDの削除墓場にあれば外す
-    if (deletedIdsRef.current.has(post.id)) {
-      deletedIdsRef.current.delete(post.id);
-      saveDeleted();
-    }
     const map = safeLoad(KEYS.posts) || {};
     map[post.id] = post;
-    safeSave(KEYS.posts, map);
-    setPosts(Object.values(map).sort((a, b) => b.timestamp - a.timestamp));
-    if (typeof window !== 'undefined' && window.storage) {
-      window.storage.set(`posts:${post.id}`, JSON.stringify(post), true).catch(() => {});
+    setFromMap(map);
+    if (supabase) {
+      supabase.from('posts').upsert({ id: post.id, data: post }).catch(console.error);
     }
   }, []);
 
   const removePost = useCallback((id) => {
-    // 削除済みリストに追加（同期で復活させない）
-    deletedIdsRef.current.add(id);
-    saveDeleted();
     const map = safeLoad(KEYS.posts) || {};
     delete map[id];
-    safeSave(KEYS.posts, map);
-    setPosts(Object.values(map).sort((a, b) => b.timestamp - a.timestamp));
-    if (typeof window !== 'undefined' && window.storage) {
-      window.storage.delete(`posts:${id}`, true).catch(() => {});
+    setFromMap(map);
+    if (supabase) {
+      supabase.from('posts').delete().eq('id', id).catch(console.error);
     }
   }, []);
 
   const removeAllPosts = useCallback(() => {
-    const map = safeLoad(KEYS.posts) || {};
-    // 全部削除済みリストへ
-    Object.keys(map).forEach(id => deletedIdsRef.current.add(id));
-    saveDeleted();
-    if (typeof window !== 'undefined' && window.storage) {
-      Object.keys(map).forEach(id => window.storage.delete(`posts:${id}`, true).catch(() => {}));
-      // クラウドにあるその他のキーも一掃
-      window.storage.list('posts:', true).then(result => {
-        if (result?.keys) {
-          result.keys.forEach(key => {
-            const id = key.startsWith('posts:') ? key.slice(6) : key;
-            deletedIdsRef.current.add(id);
-            window.storage.delete(key, true).catch(() => {});
-          });
-          saveDeleted();
-        }
-      }).catch(() => {});
+    const ids = Object.keys(safeLoad(KEYS.posts) || {});
+    setFromMap({});
+    if (supabase && ids.length > 0) {
+      supabase.from('posts').delete().in('id', ids).catch(console.error);
     }
-    safeSave(KEYS.posts, {});
-    setPosts([]);
   }, []);
 
-  // いいね・コメント等の部分更新（updater関数を受け取る）
   const updatePost = useCallback((id, updater) => {
     const map = safeLoad(KEYS.posts) || {};
     if (!map[id]) return;
     const updated = { ...updater(map[id]) };
     map[id] = updated;
-    safeSave(KEYS.posts, map);
-    setPosts(Object.values(map).sort((a, b) => b.timestamp - a.timestamp));
-    if (typeof window !== 'undefined' && window.storage) {
-      window.storage.set(`posts:${id}`, JSON.stringify(updated), true).catch(() => {});
+    setFromMap(map);
+    if (supabase) {
+      supabase.from('posts').upsert({ id: updated.id, data: updated }).catch(console.error);
     }
   }, []);
 
