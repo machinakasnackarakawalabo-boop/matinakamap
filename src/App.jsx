@@ -1673,11 +1673,17 @@ function MapView({ posts, addPost, updatePost, stores, tags, settings, updateSet
                 onClick={() => {
                   const overrides = settings?.pinOverrides || {};
                   const out = {};
+                  // 都道府県
                   Object.keys(PREFS).forEach(k => {
                     if (k === 'overseas') return;
                     const p = PREFS[k];
                     const ov = overrides[k];
                     out[k] = { x: ov?.x ?? p.x, y: ov?.y ?? p.y };
+                  });
+                  // お店（store:xxx キー）
+                  Object.values(stores).forEach(st => {
+                    const ov = overrides[`store:${st.id}`];
+                    if (ov) out[`store:${st.id}`] = { x: ov.x, y: ov.y };
                   });
                   const text = JSON.stringify(out);
                   navigator.clipboard.writeText(text).then(() => alert('コピーしました！チャットに貼り付けてください'));
