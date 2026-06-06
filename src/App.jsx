@@ -344,37 +344,26 @@ function usePosts() {
     };
   }, []);
 
+  const sb = async (fn) => { try { const { error } = await fn(); if (error) console.error('Supabase:', error); } catch(e) { console.error('Supabase:', e); } };
+
   const addPost = useCallback((post) => {
     const map = safeLoad(KEYS.posts) || {};
     map[post.id] = post;
     setFromMap(map);
-    if (supabase) {
-      supabase.from('posts').upsert({ id: post.id, data: post })
-        .then(({ error }) => {
-          if (error) console.error('Supabase upsert error:', error);
-          else console.log('Supabase upsert OK:', post.id);
-        })
-        .catch(e => console.error('Supabase upsert catch:', e));
-    } else {
-      console.warn('Supabase client is null - check env vars');
-    }
+    if (supabase) sb(() => supabase.from('posts').upsert({ id: post.id, data: post }));
   }, []);
 
   const removePost = useCallback((id) => {
     const map = safeLoad(KEYS.posts) || {};
     delete map[id];
     setFromMap(map);
-    if (supabase) {
-      supabase.from('posts').delete().eq('id', id).catch(console.error);
-    }
+    if (supabase) sb(() => supabase.from('posts').delete().eq('id', id));
   }, []);
 
   const removeAllPosts = useCallback(() => {
     const ids = Object.keys(safeLoad(KEYS.posts) || {});
     setFromMap({});
-    if (supabase && ids.length > 0) {
-      supabase.from('posts').delete().in('id', ids).catch(console.error);
-    }
+    if (supabase && ids.length > 0) sb(() => supabase.from('posts').delete().in('id', ids));
   }, []);
 
   const updatePost = useCallback((id, updater) => {
@@ -383,9 +372,7 @@ function usePosts() {
     const updated = { ...updater(map[id]) };
     map[id] = updated;
     setFromMap(map);
-    if (supabase) {
-      supabase.from('posts').upsert({ id: updated.id, data: updated }).catch(console.error);
-    }
+    if (supabase) sb(() => supabase.from('posts').upsert({ id: updated.id, data: updated }));
   }, []);
 
   return { posts, addPost, removePost, removeAllPosts, updatePost };
