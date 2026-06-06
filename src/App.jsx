@@ -349,7 +349,14 @@ function usePosts() {
     map[post.id] = post;
     setFromMap(map);
     if (supabase) {
-      supabase.from('posts').upsert({ id: post.id, data: post }).catch(console.error);
+      supabase.from('posts').upsert({ id: post.id, data: post })
+        .then(({ error }) => {
+          if (error) console.error('Supabase upsert error:', error);
+          else console.log('Supabase upsert OK:', post.id);
+        })
+        .catch(e => console.error('Supabase upsert catch:', e));
+    } else {
+      console.warn('Supabase client is null - check env vars');
     }
   }, []);
 
@@ -1181,7 +1188,7 @@ function PostForm({ onSubmit, onCancel, stores, tags: availableTags }) {
     };
     onSubmit(post);
     setSuccess({ pref, store });
-    setTimeout(() => onCancel(), 1800);
+    if (onCancel) setTimeout(() => onCancel(), 1800);
   };
 
   if (success) {
