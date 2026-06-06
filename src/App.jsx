@@ -1666,9 +1666,24 @@ function MapView({ posts, addPost, updatePost, stores, tags, settings, updateSet
               </div>
               <button
                 onClick={commitAllPins}
-                style={{ ...s.rowBtn, background: C.green, color: '#fff', borderColor: C.green, fontSize: '0.625rem', marginTop: 4, fontWeight: 700 }}
-                title="現在の全ピン位置をリロード後も使われる初期値として保存">
+                style={{ ...s.rowBtn, background: C.green, color: '#fff', borderColor: C.green, fontSize: '0.625rem', marginTop: 4, fontWeight: 700 }}>
                 ✓ 現在位置を初期値として確定
+              </button>
+              <button
+                onClick={() => {
+                  const overrides = settings?.pinOverrides || {};
+                  const out = {};
+                  Object.keys(PREFS).forEach(k => {
+                    if (k === 'overseas') return;
+                    const p = PREFS[k];
+                    const ov = overrides[k];
+                    out[k] = { x: ov?.x ?? p.x, y: ov?.y ?? p.y };
+                  });
+                  const text = JSON.stringify(out);
+                  navigator.clipboard.writeText(text).then(() => alert('コピーしました！チャットに貼り付けてください'));
+                }}
+                style={{ ...s.rowBtn, fontSize: '0.625rem', marginTop: 2 }}>
+                📋 座標をコピー（開発者用）
               </button>
               <button onClick={resetAllPins} style={{ ...s.rowBtn, color: C.pink, borderColor: C.pink, fontSize: '0.625rem' }}>リセット</button>
             </div>
