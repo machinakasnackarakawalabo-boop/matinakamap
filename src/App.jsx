@@ -596,7 +596,9 @@ const DEFAULT_SETTINGS = {
   showWants: true,     // やってみたい！
   showCityHopes: true, // こんな街になったらいいな
   fontSize: '中',      // 文字サイズ: 小/中/大/特大
-  pinOverrides: {}    // { prefecture_key: {x, y} } ドラッグ調整済み座標
+  pinOverrides: {},    // { prefecture_key: {x, y} } ドラッグ調整済み座標
+  adminId: 'machinaka.snack.arakawalabo@gmail.com',
+  adminPassword: 'Tanaka3004'
 };
 
 const FONT_SIZE_ZOOM = { '小': 0.82, '中': 1.0, '大': 1.4, '特大': 1.8 };
@@ -2604,206 +2606,123 @@ function QRScreen() {
 // お客様ページ（QRからアクセス）マップ＋投稿
 // =====================================
 function CustomerPostPage({ posts, addPost, updatePost, stores, tags, settings }) {
-  const tagMap = useMemo(() => Object.fromEntries((tags || []).map(t => [t.key, t])), [tags]);
-  const [showForm, setShowForm] = useState(false);
-  const [detailPost, setDetailPost] = useState(null);
-  const [prefFilter, setPrefFilter] = useState('');
-  const [tagFilter, setTagFilter] = useState('');
-  const [dateRange, setDateRange] = useState('all');
-  const [photoOnly, setPhotoOnly] = useState(false);
-  const [regionIdx, setRegionIdx] = useState(0);
-  const [pinnedRegion, setPinnedRegion] = useState(null);
   const [postDone, setPostDone] = useState(false);
-
-  const activeRegions = useMemo(() => {
-    const set = new Set(posts.map(p => p.region));
-    const result = ['全国'];
-    const storeNames = Object.values(stores).map(st => st.name);
-    storeNames.forEach(n => { if (set.has(n)) result.push(n); });
-    REGION_GROUPS.forEach(r => { if (set.has(r)) result.push(r); });
-    if (set.has('海外')) result.push('海外');
-    return result;
-  }, [posts, stores]);
-
-  const currentRegion = pinnedRegion || (activeRegions[regionIdx] || '全国');
-  const regionColor = REGION_COLOR(currentRegion);
-
-  const getPinInfo = useCallback((key) => {
-    const override = settings?.pinOverrides?.[key];
-    // store: プレフィックス対応（MapViewと同じ形式）
-    if (key.startsWith('store:')) {
-      const id = key.slice(6);
-      const st = stores[id];
-      if (!st) return null;
-      const base = { x: st.x, y: st.y, name: st.name, region: st.name, isStore: true };
-      return override ? { ...base, x: override.x, y: override.y } : base;
-    }
-    if (PREFS[key]) {
-      const base = { ...PREFS[key], isStore: false };
-      return override ? { ...base, x: override.x, y: override.y } : base;
-    }
-    return null;
-  }, [stores, settings?.pinOverrides]);
-
-  // 管理側と同じ動的計算：地域内の実際のピン座標からviewBoxを算出
-  const viewBox = useMemo(() => {
-    if (currentRegion === '全国' || currentRegion === '海外') return '0 0 1000 667';
-    const VW = 1000, VH = 667;
-    const prefsInRegion = Object.entries(PREFS).filter(([k, p]) => p.region === currentRegion && k !== 'overseas');
-    if (prefsInRegion.length > 0) {
-      const positions = prefsInRegion.map(([k]) => getPinInfo(k)).filter(Boolean);
-      if (positions.length > 0) {
-        const xs = positions.map(p => p.x), ys = positions.map(p => p.y);
-        const pad = 0.07;
-        const rx1 = Math.max(0, Math.min(...xs) - pad);
-        const ry1 = Math.max(0, Math.min(...ys) - pad);
-        const rx2 = Math.min(1, Math.max(...xs) + pad);
-        const ry2 = Math.min(1, Math.max(...ys) + pad);
-        let w = (rx2 - rx1) * VW, h = (ry2 - ry1) * VH;
-        if (w / h < 1.4) w = h * 1.4;
-        return `${rx1 * VW} ${ry1 * VH} ${w} ${h}`;
-      }
-    }
-    return '0 0 1000 667';
-  }, [currentRegion, getPinInfo]);
-
-  const pins = useMemo(() => {
-    const map = {};
-    posts.forEach(p => {
-      let key;
-      if (p.storeId && stores[p.storeId]) {
-        key = `store:${p.storeId}`;  // MapViewと同じ形式
-      } else {
-        key = p.prefecture;
-      }
-      if (key) map[key] = (map[key] || 0) + 1;
-    });
-    return map;
-  }, [posts, stores]);
-
-  const visiblePosts = useMemo(() => {
-    return posts.filter(p => {
-      if (currentRegion !== '全国') {
-        const inRegion = p.region === currentRegion || Object.values(stores).some(st => st.name === currentRegion && st.id === p.storeId);
-        if (!inRegion) return false;
-      }
-      if (prefFilter && p.prefecture !== prefFilter) return false;
-      if (tagFilter && !(p.tags || []).includes(tagFilter)) return false;
-      if (photoOnly && !(p.photos?.length > 0)) return false;
-      if (dateRange !== 'all') {
-        const now = Date.now();
-        const ranges = { today: 86400000, week: 604800000, month: 2592000000, '3months': 7776000000, year: 31536000000 };
-        if (ranges[dateRange] && now - p.timestamp > ranges[dateRange]) return false;
-      }
-      return true;
-    });
-  }, [posts, currentRegion, prefFilter, tagFilter, photoOnly, dateRange, stores]);
-
-  const prefsInView = useMemo(() => {
-    const base = currentRegion === '全国' ? posts : posts.filter(p => p.region === currentRegion);
-    const seen = new Map();
-    base.forEach(p => {
-      if (p.storeId && stores[p.storeId]) {
-        seen.set(p.storeId, `🏠 ${stores[p.storeId].name}`);
-      } else if (p.prefecture) {
-        seen.set(p.prefecture, p.prefectureName);
-      }
-    });
-    return Array.from(seen.entries());
-  }, [posts, currentRegion, stores]);
+  const [formKey, setFormKey] = useState(0); // フォームリセット用
 
   const handleSubmit = (post) => {
     addPost(post);
     setPostDone(true);
-    setShowForm(false);
+    setFormKey(k => k + 1); // フォームをリセット
   };
 
-  if (showForm) {
-    return (
-      <PostForm
-        onSubmit={handleSubmit}
-        onCancel={() => setShowForm(false)}
-        stores={stores}
-        tags={tags}
-      />
-    );
-  }
-
   return (
-    <div style={{ minHeight: '100vh', background: C.bgWhite, fontFamily: FONT_BODY, paddingBottom: 80 }}>
+    <div style={{ minHeight: '100vh', background: C.bgWhite, fontFamily: FONT_BODY }}>
       {/* ヘッダー */}
-      <header style={{ padding: '10px 16px', display: 'flex', alignItems: 'center', gap: 8, borderBottom: `1px solid ${C.line}`, background: C.bgWhite, position: 'sticky', top: 0, zIndex: 20 }}>
-        <div style={{ fontFamily: FONT_DISPLAY, fontSize: '1rem', fontWeight: 700, letterSpacing: 3, color: C.ink }}>街中スナック</div>
-        <div style={{ fontFamily: FONT_HAND, fontSize: '0.625rem', color: C.inkSub, letterSpacing: 1 }}>みんなのおすすめマップ</div>
-        <div style={{ marginLeft: 'auto', background: C.greenLight, color: C.green, fontFamily: FONT_HAND, fontSize: '0.625rem', fontWeight: 700, padding: '3px 8px', borderRadius: 999 }}>
-          👋 ゲスト
+      <header style={{ padding: '12px 16px', display: 'flex', alignItems: 'center', gap: 8, borderBottom: `2px solid ${C.green}`, background: C.bgWhite, position: 'sticky', top: 0, zIndex: 20 }}>
+        <div style={{ fontFamily: FONT_DISPLAY, fontSize: '1.0625rem', fontWeight: 700, letterSpacing: 3, color: C.ink }}>街中スナック</div>
+        <div style={{ fontFamily: FONT_HAND, fontSize: '0.6875rem', color: C.inkSub, letterSpacing: 1 }}>みんなのおすすめマップ</div>
+        <div style={{ marginLeft: 'auto', background: C.greenLight, color: C.green, fontFamily: FONT_HAND, fontSize: '0.6875rem', fontWeight: 700, padding: '4px 10px', borderRadius: 999 }}>
+          📌 投稿フォーム
         </div>
       </header>
 
-      {/* 地域タブ */}
-      <div style={{ display: 'flex', gap: 6, padding: '8px 12px', overflowX: 'auto', borderBottom: `1px solid ${C.line}`, background: C.bgOff }}>
-        {activeRegions.map((r, i) => (
-          <button key={r} onClick={() => { setPinnedRegion(r); setRegionIdx(i); }}
-            style={{ ...s.regionTab, flexShrink: 0, fontSize: '0.6875rem', padding: '4px 10px',
-              ...(currentRegion === r ? { background: REGION_COLOR(r), color: '#fff', fontWeight: 700 } : {}) }}>
-            {r === '全国' ? '🌐 全国' : r}
-          </button>
-        ))}
-      </div>
-
-      {/* マップ */}
-      <div style={{ width: '100%', aspectRatio: '4/3', position: 'relative', background: 'transparent', overflow: 'hidden' }}>
-        {currentRegion === '海外' ? (
-          <WorldMapView pins={pins} currentRegion={currentRegion} posts={posts}/>
-        ) : (
-          <JapanMapView pins={pins} currentRegion={currentRegion} viewBox={viewBox} getPinInfo={getPinInfo} stores={stores}/>
-        )}
-        {/* 場所バッジ */}
-        {currentRegion && (
-          <div style={{ ...s.regionOverlay, bottom: 10, right: 10, padding: '8px 14px' , background: regionColor }}>
-            <div style={s.regionOverlayLabel}>{currentRegion === '全国' ? 'ALL · 🌐' : 'NOW SHOWING'}</div>
-            <div style={{ ...s.regionOverlayName, fontSize: '1.125rem' }}>{currentRegion}{(['全国','海外'].includes(currentRegion)) ? '' : '地方'}</div>
-            <div style={s.regionOverlayCount}>{visiblePosts.length} 件</div>
-          </div>
-        )}
-      </div>
-
-      {/* 絞り込みパネル */}
-      <FilterPanel
-        prefFilter={prefFilter} setPrefFilter={setPrefFilter}
-        tagFilter={tagFilter} setTagFilter={setTagFilter}
-        dateRange={dateRange} setDateRange={setDateRange}
-        photoOnly={photoOnly} setPhotoOnly={setPhotoOnly}
-        prefsInView={prefsInView} tags={tags}
-      />
-
       {/* 投稿完了バナー */}
       {postDone && (
-        <div style={{ margin: '8px 12px', padding: '10px 16px', background: C.greenLight, borderRadius: 8, display: 'flex', alignItems: 'center', gap: 8, border: `1px solid ${C.green}` }}>
-          <span style={{ fontSize: '1.125rem' }}>📌</span>
-          <span style={{ fontFamily: FONT_HAND, fontSize: '0.8125rem', color: C.green, fontWeight: 700 }}>投稿しました！マップに反映されました</span>
-          <button onClick={() => setPostDone(false)} style={{ marginLeft: 'auto', background: 'none', border: 'none', cursor: 'pointer', color: C.inkSub, fontSize: '1rem' }}>×</button>
+        <div style={{ margin: '12px 16px', padding: '12px 16px', background: C.greenLight, borderRadius: 10, display: 'flex', alignItems: 'center', gap: 10, border: `1px solid ${C.green}` }}>
+          <span style={{ fontSize: '1.25rem' }}>🎉</span>
+          <div>
+            <div style={{ fontFamily: FONT_HAND, fontSize: '0.9375rem', color: C.green, fontWeight: 700 }}>投稿ありがとうございました！</div>
+            <div style={{ fontFamily: FONT_HAND, fontSize: '0.75rem', color: C.inkSub, marginTop: 2 }}>マップに反映されました。続けて投稿できます。</div>
+          </div>
+          <button onClick={() => setPostDone(false)} style={{ marginLeft: 'auto', background: 'none', border: 'none', cursor: 'pointer', color: C.inkSub, fontSize: '1.125rem' }}>×</button>
         </div>
       )}
 
-      {/* 投稿リスト（自動スクロールなし） */}
-      <ScrollingList posts={visiblePosts} regionColor={regionColor} onPostClick={setDetailPost} tagMap={tagMap} noAutoScroll={true}/>
+      {/* 常にフォームを表示 */}
+      <PostForm
+        key={formKey}
+        onSubmit={handleSubmit}
+        onCancel={null}
+        stores={stores}
+        tags={tags}
+      />
+    </div>
+  );
+}
 
-      {/* 詳細モーダル */}
-      {detailPost && (
-        <PostDetailModal
-          post={posts.find(p => p.id === detailPost.id) || detailPost}
-          updatePost={updatePost}
-          tagMap={tagMap}
-          onClose={() => setDetailPost(null)}
-        />
-      )}
+// =====================================
+// 管理ログイン画面
+// =====================================
+function AdminLoginScreen({ settings, onLogin }) {
+  const [inputId, setInputId] = useState('');
+  const [inputPw, setInputPw] = useState('');
+  const [error, setError] = useState('');
+  const [showPw, setShowPw] = useState(false);
 
-      {/* 常時表示FAB（左下） */}
-      <button onClick={() => setShowForm(true)} style={{ ...s.fab, bottom: 24, left: 24, right: 'auto' }}>
-        <span style={{ fontSize: '1.375rem', lineHeight: 1 }}>＋</span>
-        <span>投稿する</span>
-      </button>
+  const handleSubmit = (e) => {
+    e.preventDefault();
+    const correctId = settings.adminId || 'machinaka.snack.arakawalabo@gmail.com';
+    const correctPw = settings.adminPassword || 'Tanaka3004';
+    if (inputId === correctId && inputPw === correctPw) {
+      setError('');
+      onLogin();
+    } else {
+      setError('IDまたはパスワードが正しくありません');
+      setInputPw('');
+    }
+  };
+
+  return (
+    <div style={{ minHeight: '100vh', background: C.bgOff, display: 'flex', alignItems: 'center', justifyContent: 'center', padding: 24 }}>
+      <div style={{ width: '100%', maxWidth: 400, background: C.bgWhite, borderRadius: 16, padding: 32, boxShadow: '0 4px 24px rgba(0,0,0,0.10)' }}>
+        {/* ロゴ */}
+        <div style={{ textAlign: 'center', marginBottom: 28 }}>
+          <div style={{ fontFamily: FONT_DISPLAY, fontSize: '2rem', fontWeight: 700, letterSpacing: 4, color: C.ink }}>街中</div>
+          <div style={{ fontFamily: FONT_DISPLAY, fontSize: '1rem', fontWeight: 700, letterSpacing: 3, color: C.inkSub, marginTop: 4 }}>管理画面ログイン</div>
+          <div style={{ fontFamily: FONT_LATIN, fontSize: '0.6875rem', color: C.inkLight, letterSpacing: 3, marginTop: 4 }}>ADMIN LOGIN</div>
+        </div>
+
+        <form onSubmit={handleSubmit} style={{ display: 'flex', flexDirection: 'column', gap: 16 }}>
+          <div>
+            <label style={{ display: 'block', fontFamily: FONT_HAND, fontSize: '0.8125rem', color: C.inkSub, marginBottom: 6 }}>ID（メールアドレス）</label>
+            <input
+              type="email"
+              value={inputId}
+              onChange={e => setInputId(e.target.value)}
+              placeholder="メールアドレスを入力"
+              required
+              autoComplete="username"
+              style={{ width: '100%', padding: '10px 12px', borderRadius: 8, border: `1.5px solid ${C.line}`, fontFamily: FONT_BODY, fontSize: '0.9375rem', outline: 'none', boxSizing: 'border-box' }}
+            />
+          </div>
+          <div>
+            <label style={{ display: 'block', fontFamily: FONT_HAND, fontSize: '0.8125rem', color: C.inkSub, marginBottom: 6 }}>パスワード</label>
+            <div style={{ position: 'relative' }}>
+              <input
+                type={showPw ? 'text' : 'password'}
+                value={inputPw}
+                onChange={e => setInputPw(e.target.value)}
+                placeholder="パスワードを入力"
+                required
+                autoComplete="current-password"
+                style={{ width: '100%', padding: '10px 40px 10px 12px', borderRadius: 8, border: `1.5px solid ${C.line}`, fontFamily: FONT_BODY, fontSize: '0.9375rem', outline: 'none', boxSizing: 'border-box' }}
+              />
+              <button type="button" onClick={() => setShowPw(v => !v)}
+                style={{ position: 'absolute', right: 10, top: '50%', transform: 'translateY(-50%)', background: 'none', border: 'none', cursor: 'pointer', color: C.inkSub, fontSize: '1rem' }}>
+                {showPw ? '🙈' : '👁'}
+              </button>
+            </div>
+          </div>
+          {error && (
+            <div style={{ background: '#fff0f0', border: `1px solid ${C.pink}`, borderRadius: 8, padding: '8px 12px', fontFamily: FONT_HAND, fontSize: '0.8125rem', color: C.pink }}>
+              ⚠️ {error}
+            </div>
+          )}
+          <button type="submit" style={{ marginTop: 4, padding: '12px', borderRadius: 10, background: C.green, color: '#fff', border: 'none', fontFamily: FONT_DISPLAY, fontSize: '1rem', fontWeight: 700, letterSpacing: 2, cursor: 'pointer' }}>
+            ログイン
+          </button>
+        </form>
+      </div>
     </div>
   );
 }
@@ -3629,6 +3548,19 @@ function StoreModal({ store, isNew, onSave, onCancel }) {
 }
 
 function SettingsTab({ settings, updateSettings }) {
+  // パスワード変更フォーム用
+  const [pwForm, setPwForm] = useState({ id: '', newPw: '', confirmPw: '' });
+  const [pwMsg, setPwMsg] = useState(null); // { type: 'ok'|'err', text }
+
+  const handlePwSave = () => {
+    if (!pwForm.id.trim()) { setPwMsg({ type: 'err', text: 'IDを入力してください' }); return; }
+    if (pwForm.newPw.length < 6) { setPwMsg({ type: 'err', text: 'パスワードは6文字以上にしてください' }); return; }
+    if (pwForm.newPw !== pwForm.confirmPw) { setPwMsg({ type: 'err', text: 'パスワードが一致しません' }); return; }
+    updateSettings({ adminId: pwForm.id.trim(), adminPassword: pwForm.newPw });
+    setPwMsg({ type: 'ok', text: 'ログイン情報を更新しました' });
+    setPwForm({ id: '', newPw: '', confirmPw: '' });
+  };
+
   const mainToggles = [
     { key: 'showMap', label: 'みんなのおすすめマップ', desc: '日本地図と投稿機能', icon: '🗾' },
     { key: 'showBoard', label: '掲示板', desc: '掲示板タブ全体', icon: '📋' },
@@ -3721,6 +3653,51 @@ function SettingsTab({ settings, updateSettings }) {
             </button>
           );
         })}
+      </div>
+
+      {/* ログイン情報変更 */}
+      <div style={{ marginTop: 36 }}>
+        <div style={{ fontFamily: FONT_DISPLAY, fontSize: '0.8125rem', fontWeight: 700, color: C.inkSub, letterSpacing: 3, marginBottom: 12 }}>
+          🔐 管理ログイン情報の変更
+        </div>
+        <div style={{ fontFamily: FONT_HAND, fontSize: '0.6875rem', color: C.inkLight, marginBottom: 16 }}>
+          現在のID: <strong>{settings.adminId || 'machinaka.snack.arakawalabo@gmail.com'}</strong>
+        </div>
+        <div style={{ display: 'flex', flexDirection: 'column', gap: 10 }}>
+          <div>
+            <label style={{ display: 'block', fontFamily: FONT_HAND, fontSize: '0.8125rem', color: C.inkSub, marginBottom: 4 }}>新しいID（メールアドレス）</label>
+            <input type="email" value={pwForm.id} onChange={e => setPwForm(f => ({ ...f, id: e.target.value }))}
+              placeholder="新しいメールアドレス"
+              style={{ width: '100%', padding: '10px 12px', borderRadius: 8, border: `1.5px solid ${C.line}`, fontFamily: FONT_BODY, fontSize: '0.9375rem', outline: 'none', boxSizing: 'border-box' }}
+            />
+          </div>
+          <div>
+            <label style={{ display: 'block', fontFamily: FONT_HAND, fontSize: '0.8125rem', color: C.inkSub, marginBottom: 4 }}>新しいパスワード（6文字以上）</label>
+            <input type="password" value={pwForm.newPw} onChange={e => setPwForm(f => ({ ...f, newPw: e.target.value }))}
+              placeholder="新しいパスワード"
+              style={{ width: '100%', padding: '10px 12px', borderRadius: 8, border: `1.5px solid ${C.line}`, fontFamily: FONT_BODY, fontSize: '0.9375rem', outline: 'none', boxSizing: 'border-box' }}
+            />
+          </div>
+          <div>
+            <label style={{ display: 'block', fontFamily: FONT_HAND, fontSize: '0.8125rem', color: C.inkSub, marginBottom: 4 }}>パスワード確認</label>
+            <input type="password" value={pwForm.confirmPw} onChange={e => setPwForm(f => ({ ...f, confirmPw: e.target.value }))}
+              placeholder="もう一度入力"
+              style={{ width: '100%', padding: '10px 12px', borderRadius: 8, border: `1.5px solid ${C.line}`, fontFamily: FONT_BODY, fontSize: '0.9375rem', outline: 'none', boxSizing: 'border-box' }}
+            />
+          </div>
+          {pwMsg && (
+            <div style={{ padding: '8px 12px', borderRadius: 8, fontFamily: FONT_HAND, fontSize: '0.8125rem',
+              background: pwMsg.type === 'ok' ? C.greenLight : '#fff0f0',
+              border: `1px solid ${pwMsg.type === 'ok' ? C.green : C.pink}`,
+              color: pwMsg.type === 'ok' ? C.green : C.pink }}>
+              {pwMsg.type === 'ok' ? '✅ ' : '⚠️ '}{pwMsg.text}
+            </div>
+          )}
+          <button onClick={handlePwSave}
+            style={{ padding: '10px 20px', borderRadius: 8, background: C.green, color: '#fff', border: 'none', fontFamily: FONT_DISPLAY, fontSize: '0.9375rem', fontWeight: 700, cursor: 'pointer', letterSpacing: 1 }}>
+            ログイン情報を保存
+          </button>
+        </div>
       </div>
     </div>
   );
@@ -4721,6 +4698,7 @@ export default function App() {
   const [view, setView] = useState('map');
   const [isCustomer, setIsCustomer] = useState(false);
   const [isAdmin, setIsAdmin] = useState(false);
+  const [adminLoggedIn, setAdminLoggedIn] = useState(false);
   const { posts, addPost, removePost, removeAllPosts, updatePost } = usePosts();
   const { stores, saveStore, deleteStore } = useStores();
   const { settings, updateSettings } = useSettings();
@@ -4735,10 +4713,9 @@ export default function App() {
     const params = new URLSearchParams(window.location.search);
     const v = params.get('view');
     const customer = params.get('customer') === '1';
-    const admin = params.get('admin') === '1';
 
     setIsCustomer(customer);
-    setIsAdmin(admin || !customer);
+    setIsAdmin(!customer);
 
     if (v && ['map', 'board', 'qr', 'admin'].includes(v)) {
       if (customer && v === 'admin') {
@@ -4753,15 +4730,15 @@ export default function App() {
   const tabs = [];
   if (settings.showMap) tabs.push({ key: 'map', icon: '🗾', label: 'マップ' });
   if (settings.showBoard) tabs.push({ key: 'board', icon: '📋', label: '掲示板' });
-  if (isAdmin && settings.showQR) tabs.push({ key: 'qr', icon: '📱', label: 'QR' });
-  if (isAdmin) tabs.push({ key: 'admin', icon: '⚙️', label: '管理' });
+  if (isAdmin && adminLoggedIn && settings.showQR) tabs.push({ key: 'qr', icon: '📱', label: 'QR' });
+  if (isAdmin) tabs.push({ key: 'admin', icon: '⚙️', label: adminLoggedIn ? '管理' : '🔐 管理' });
 
   useEffect(() => {
     if (!tabs.some(t => t.key === view)) {
-      setView('map');
+      setView(tabs[0]?.key || 'map');
     }
     // eslint-disable-next-line
-  }, [view, isAdmin, settings.showQR, settings.showMap, settings.showBoard]);
+  }, [view, isAdmin, adminLoggedIn, settings.showQR, settings.showMap, settings.showBoard]);
 
   // 文字サイズ：管理画面のみ適用。スマホ（customer）はブラウザデフォルトのまま
   useEffect(() => {
@@ -4779,6 +4756,24 @@ export default function App() {
     return <CustomerPostPage posts={posts} addPost={addPost} updatePost={updatePost} stores={stores} tags={tags} settings={settings}/>;
   }
 
+  // 管理タブ選択中かつ未ログイン → ログイン画面
+  if (view === 'admin' && isAdmin && !adminLoggedIn) {
+    return (
+      <div style={{ minHeight: '100vh', fontFamily: FONT_BODY, background: C.bgWhite, color: C.ink }}>
+        <div style={s.switcher}>
+          {tabs.map(t => (
+            <button key={t.key} onClick={() => setView(t.key)} style={{ ...s.switcherBtn, ...(view === t.key ? s.switcherBtnActive : {}) }}>
+              <span>{t.icon}</span>
+              <span style={{ fontSize: '0.6875rem', fontWeight: 600 }}>{t.label}</span>
+            </button>
+          ))}
+          <div style={s.totalBadge}>{posts.length}</div>
+        </div>
+        <AdminLoginScreen settings={settings} onLogin={() => setAdminLoggedIn(true)}/>
+      </div>
+    );
+  }
+
   return (
     <div style={{ minHeight: '100vh', fontFamily: FONT_BODY, background: C.bgWhite, color: C.ink }}>
       <div style={s.switcher}>
@@ -4789,14 +4784,11 @@ export default function App() {
           </button>
         ))}
         <div style={s.totalBadge}>{posts.length}</div>
-        {isCustomer && (
-          <div style={{
-            background: C.green, color: '#fff',
-            fontFamily: FONT_HAND, fontSize: '0.625rem', fontWeight: 700,
-            padding: '4px 10px', borderRadius: 999, marginLeft: 4, letterSpacing: 1
-          }}>
-            👋 ゲスト
-          </div>
+        {adminLoggedIn && (
+          <button onClick={() => { setAdminLoggedIn(false); setView('map'); }}
+            style={{ background: 'none', border: `1px solid ${C.line}`, borderRadius: 999, padding: '4px 8px', cursor: 'pointer', fontFamily: FONT_HAND, fontSize: '0.625rem', color: C.inkSub }}>
+            ログアウト
+          </button>
         )}
       </div>
 
@@ -4811,8 +4803,8 @@ export default function App() {
           settings={settings}
         />
       )}
-      {view === 'qr' && isAdmin && <QRScreen/>}
-      {view === 'admin' && isAdmin && (
+      {view === 'qr' && isAdmin && adminLoggedIn && <QRScreen/>}
+      {view === 'admin' && isAdmin && adminLoggedIn && (
         <AdminScreen
           posts={posts}
           removePost={removePost}
