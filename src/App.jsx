@@ -80,6 +80,9 @@ const REGION_GROUPS = ['北海道', '東北', '関東', '中部', '近畿', '中
 // イベント地域モード（愛知）のサブ地域
 const AICHI_SUBREGIONS = ['名古屋', '尾張東部', '尾張西部', '知多', '西三河', '東三河'];
 
+// 荒川区サブ地域
+const ARAKAWA_SUBREGIONS = ['町屋', '荒川', '南千住', '日暮里', '東尾久', '西尾久'];
+
 const DEFAULT_STORES = {
   arakawa: { id: 'arakawa', name: '荒川区', fullName: 'ARAKAWA LABO 本店', parentPref: 'tokyo', x: 0.644, y: 0.581, description: 'ARAKAWA LABO 本店' },
   iwanuma: { id: 'iwanuma', name: '岩沼市', fullName: '駅中スナック 岩沼店', parentPref: 'miyagi', x: 0.696, y: 0.438, description: '駅中スナック 岩沼店' },
@@ -1035,7 +1038,8 @@ function PostForm({ onSubmit, onCancel, stores, tags: availableTags }) {
   const [gender, setGender] = useState('');        // 性別
   const [tags, setTags] = useState([]);            // タグ
   const [country, setCountry] = useState('');           // 海外の場合の国名
-  const [aichiSubRegion, setAichiSubRegion] = useState(''); // 愛知サブ地域
+  const [aichiSubRegion, setAichiSubRegion] = useState('');   // 愛知サブ地域
+  const [arakawaSubRegion, setArakawaSubRegion] = useState(''); // 荒川区サブ地域
   const [url, setUrl] = useState('');                   // おすすめ場所のURL（任意）
   const [submitting, setSubmitting] = useState(false);
   const [success, setSuccess] = useState(null);
@@ -1050,7 +1054,7 @@ function PostForm({ onSubmit, onCancel, stores, tags: availableTags }) {
     if (savedGender) setGender(savedGender);
   }, []);
 
-  useEffect(() => { setStoreId(''); setAichiSubRegion(''); }, [prefecture]);
+  useEffect(() => { setStoreId(''); setAichiSubRegion(''); setArakawaSubRegion(''); }, [prefecture]);
 
   const availableStores = useMemo(
     () => Object.values(stores).filter(s => s.parentPref === prefecture),
@@ -1181,6 +1185,7 @@ function PostForm({ onSubmit, onCancel, stores, tags: availableTags }) {
       tags: tags,
       url: url.trim() || null,
       aichiSubRegion: prefecture === 'aichi' && aichiSubRegion ? aichiSubRegion : null,
+      arakawaSubRegion: storeId === 'arakawa' && arakawaSubRegion ? arakawaSubRegion : null,
       likes: [],
       comments: [],
       timestamp: Date.now()
@@ -1298,6 +1303,33 @@ function PostForm({ onSubmit, onCancel, stores, tags: availableTags }) {
                 <button key={store.id} type="button" onClick={() => setStoreId(store.id)} style={{ ...s.storeBtn, ...(storeId === store.id ? s.storeBtnActive : {}) }}>
                   <div style={{ fontSize: '0.875rem', fontWeight: 700 }}>🏠 {store.name}</div>
                   <div style={{ fontSize: '0.625rem', opacity: 0.75, marginTop: 4 }}>{store.description}</div>
+                </button>
+              ))}
+            </div>
+          </div>
+        )}
+
+        {/* 荒川区店舗選択時：サブ地域選択 */}
+        {storeId === 'arakawa' && (
+          <div style={s.field}>
+            <label style={s.label}>
+              <span style={{ ...s.labelDot, background: C.pink }} />荒川区の地域
+              <span style={s.optional}>任意</span>
+            </label>
+            <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap' }}>
+              {ARAKAWA_SUBREGIONS.map(sr => (
+                <button key={sr} type="button"
+                  onClick={() => setArakawaSubRegion(prev => prev === sr ? '' : sr)}
+                  style={{
+                    padding: '8px 14px', borderRadius: 20,
+                    border: `1.5px solid ${arakawaSubRegion === sr ? C.pink : C.line}`,
+                    background: arakawaSubRegion === sr ? C.pinkLight : C.bgOff,
+                    color: arakawaSubRegion === sr ? C.pink : C.inkSub,
+                    fontFamily: FONT_HAND, fontSize: '0.875rem',
+                    fontWeight: arakawaSubRegion === sr ? 700 : 400,
+                    cursor: 'pointer'
+                  }}>
+                  {sr}
                 </button>
               ))}
             </div>
@@ -1715,6 +1747,8 @@ function MapView({ posts, addPost, updatePost, stores, tags, settings, updateSet
               svgRef={mapSvgRef} pinOverrides={settings?.pinOverrides}/>
           ) : currentRegion === '愛知' ? (
             <AichiMapView posts={visiblePosts}/>
+          ) : currentRegion === '荒川区' ? (
+            <ArakawaMapView posts={visiblePosts}/>
           ) : (
             <JapanMapView
               pins={pins}
@@ -2069,6 +2103,79 @@ function AichiMapView({ posts }) {
           background: 'rgba(255,255,255,0.9)', borderRadius: 8, padding: '6px 14px',
           fontFamily: FONT_HAND, fontSize: '0.75rem', color: C.inkSub }}>
           愛知の投稿がまだありません
+        </div>
+      )}
+    </div>
+  );
+}
+
+// =====================================
+// 荒川区マップ表示
+// =====================================
+const ARAKAWA_PIN_POS = {
+  '西尾久':  { x: 0.20, y: 0.38 },
+  '東尾久':  { x: 0.43, y: 0.33 },
+  '荒川':    { x: 0.57, y: 0.52 },
+  '町屋':    { x: 0.30, y: 0.63 },
+  '日暮里':  { x: 0.17, y: 0.74 },
+  '南千住':  { x: 0.74, y: 0.65 },
+};
+
+function ArakawaMapView({ posts }) {
+  const subCounts = useMemo(() => {
+    const map = {};
+    (posts || []).forEach(p => {
+      if (p.arakawaSubRegion) map[p.arakawaSubRegion] = (map[p.arakawaSubRegion] || 0) + 1;
+    });
+    return map;
+  }, [posts]);
+
+  const pinColor = C.pink;
+
+  return (
+    <div style={{ width: '100%', height: '100%', position: 'relative', background: '#f8f7f4', overflow: 'hidden', display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
+      <img
+        src="/arakawa-map.png"
+        alt="荒川区マップ"
+        style={{ width: '100%', height: '100%', objectFit: 'contain', display: 'block', opacity: 0.85 }}
+        onError={e => { e.target.style.display = 'none'; }}
+      />
+      {Object.entries(ARAKAWA_PIN_POS).map(([name, pos]) => {
+        const count = subCounts[name] || 0;
+        return (
+          <div key={name} style={{
+            position: 'absolute',
+            left: `${pos.x * 100}%`,
+            top: `${pos.y * 100}%`,
+            transform: 'translate(-50%, -50%)',
+            display: 'flex', flexDirection: 'column', alignItems: 'center', gap: 3,
+            pointerEvents: 'none'
+          }}>
+            {count > 0 && (
+              <div style={{
+                background: pinColor, color: '#fff',
+                fontFamily: FONT_DISPLAY, fontSize: '0.875rem', fontWeight: 700,
+                width: 32, height: 32, borderRadius: '50%',
+                display: 'flex', alignItems: 'center', justifyContent: 'center',
+                boxShadow: '0 2px 8px rgba(0,0,0,0.25)',
+                border: '2px solid #fff'
+              }}>{count}</div>
+            )}
+            <div style={{
+              background: count > 0 ? 'rgba(231,76,109,0.92)' : 'rgba(60,60,60,0.55)',
+              color: '#fff',
+              fontFamily: FONT_HAND, fontSize: '0.6875rem', fontWeight: count > 0 ? 700 : 400,
+              padding: '2px 8px', borderRadius: 10,
+              whiteSpace: 'nowrap', letterSpacing: 0.5
+            }}>{name}</div>
+          </div>
+        );
+      })}
+      {posts && posts.length === 0 && (
+        <div style={{ position: 'absolute', bottom: 16, left: '50%', transform: 'translateX(-50%)',
+          background: 'rgba(255,255,255,0.9)', borderRadius: 8, padding: '6px 14px',
+          fontFamily: FONT_HAND, fontSize: '0.75rem', color: C.inkSub }}>
+          荒川区の投稿がまだありません
         </div>
       )}
     </div>
@@ -2454,6 +2561,21 @@ function PostDetailModal({ post, updatePost, tagMap, onClose }) {
 
         <div style={{ fontFamily: FONT_HAND, fontSize: '1rem', lineHeight: 1.7, color: C.ink, marginBottom: 8 }}>{post.message}</div>
 
+        {(post.aichiSubRegion || post.arakawaSubRegion) && (
+          <div style={{ display: 'flex', gap: 6, flexWrap: 'wrap', marginBottom: 10 }}>
+            {post.aichiSubRegion && (
+              <span style={{ padding: '3px 12px', borderRadius: 12, background: '#ffe8e6', border: '1px solid #e84c3d', color: '#e84c3d', fontFamily: FONT_HAND, fontSize: '0.8125rem', fontWeight: 700 }}>
+                📍 {post.aichiSubRegion}
+              </span>
+            )}
+            {post.arakawaSubRegion && (
+              <span style={{ padding: '3px 12px', borderRadius: 12, background: C.pinkLight, border: `1px solid ${C.pink}`, color: C.pink, fontFamily: FONT_HAND, fontSize: '0.8125rem', fontWeight: 700 }}>
+                📍 {post.arakawaSubRegion}
+              </span>
+            )}
+          </div>
+        )}
+
         {post.url && (
           <a href={post.url} target="_blank" rel="noopener noreferrer"
             style={{ display: 'inline-flex', alignItems: 'center', gap: 6, marginBottom: 12,
@@ -2687,6 +2809,14 @@ function ScrollingList({ posts, regionColor, onPostClick, tagMap, noAutoScroll =
                     background: '#ffe8e6', border: '1px solid #e84c3d', color: '#e84c3d',
                     fontFamily: FONT_HAND, fontSize: '0.6875rem', fontWeight: 700 }}>
                     📍 {post.aichiSubRegion}
+                  </span>
+                )}
+                {/* 荒川区サブ地域バッジ */}
+                {post.arakawaSubRegion && (
+                  <span style={{ display: 'inline-block', marginTop: 6, padding: '3px 10px', borderRadius: 12,
+                    background: C.pinkLight, border: `1px solid ${C.pink}`, color: C.pink,
+                    fontFamily: FONT_HAND, fontSize: '0.6875rem', fontWeight: 700 }}>
+                    📍 {post.arakawaSubRegion}
                   </span>
                 )}
 
@@ -3420,7 +3550,8 @@ function PostsTab({ posts, removePost, removeAllPosts, updatePost, stores }) {
       gender:     post.gender     || '',
       photos:     post.photos || (post.photo ? [post.photo] : []),
       timestamp:  post.timestamp  || Date.now(),
-      url:        post.url        || '',
+      url:           post.url           || '',
+      arakawaSubRegion: post.arakawaSubRegion || '',
     });
   };
 
@@ -3443,7 +3574,8 @@ function PostsTab({ posts, removePost, removeAllPosts, updatePost, stores }) {
         photos:        editForm.photos.length > 0 ? editForm.photos : null,
         photo:         editForm.photos[0] || null,
         timestamp:     editForm.timestamp,
-        url:           editForm.url.trim() || null,
+        url:              editForm.url.trim() || null,
+        arakawaSubRegion: editForm.arakawaSubRegion || null,
       };
     });
     setEditingPost(null);
@@ -3608,6 +3740,20 @@ function PostsTab({ posts, removePost, removeAllPosts, updatePost, stores }) {
               )}
 
               {/* URLリンク */}
+              {/* 荒川区サブ地域（荒川区店舗の投稿のみ） */}
+              {editForm.storeId === 'arakawa' && fld('荒川区の地域',
+                <div style={{ display: 'flex', gap: 6, flexWrap: 'wrap' }}>
+                  <button type="button" onClick={() => setEditForm(f => ({ ...f, arakawaSubRegion: '' }))}
+                    style={{ ...s.rowBtn, ...(editForm.arakawaSubRegion === '' ? { background: C.bgGray } : {}) }}>なし</button>
+                  {ARAKAWA_SUBREGIONS.map(sr => (
+                    <button key={sr} type="button" onClick={() => setEditForm(f => ({ ...f, arakawaSubRegion: sr }))}
+                      style={{ ...s.rowBtn, ...(editForm.arakawaSubRegion === sr ? { background: C.pinkLight, borderColor: C.pink, color: C.pink, fontWeight: 700 } : {}) }}>
+                      {sr}
+                    </button>
+                  ))}
+                </div>
+              )}
+
               {fld('URLリンク',
                 <input type="text" inputMode="url" value={editForm.url || ''} onChange={e => setEditForm(f => ({ ...f, url: e.target.value }))}
                   placeholder="https://" style={{ ...inp }}/>
