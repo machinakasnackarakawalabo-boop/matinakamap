@@ -1902,6 +1902,11 @@ function JapanMapView({ pins, currentRegion, viewBox, getPinInfo, stores, isPinM
     }
   }
 
+  // viewBox幅からピン縮小スケールを計算（ズーム時は画面上のピンが大きすぎないよう縮小）
+  const vbParts = vb.split(' ').map(Number);
+  const vbW = vbParts[2] || VW;
+  const pinScale = Math.min(1, vbW / VW);   // ズームするほど小さくなる（最大1.0）
+
   return (
     <svg ref={svgRef} viewBox={vb} style={{ ...s.mapSvg, cursor: isPinMode ? 'crosshair' : undefined }} preserveAspectRatio="xMidYMid meet">
       <defs>
@@ -1931,7 +1936,7 @@ function JapanMapView({ pins, currentRegion, viewBox, getPinInfo, stores, isPinM
           <text
             key={`label_${key}`}
             x={pref.x * VW} y={pref.y * VH + 3}
-            fontSize="11" fill={C.inkLight}
+            fontSize={Math.max(7, 11 * pinScale)} fill={C.inkLight}
             textAnchor="middle"
             style={{ fontFamily: FONT_HAND, fontWeight: 500 }}
             opacity="0.7"
@@ -1958,7 +1963,11 @@ function JapanMapView({ pins, currentRegion, viewBox, getPinInfo, stores, isPinM
         const info = getPinInfo(key);
         if (!info) return null;
         const isCurrent = isAll || info.region === currentRegion;
-        const radius = Math.min(8 + count * 3, 26);
+        // ズームに合わせてピンを縮小（地方表示時に巨大化しないよう）
+        const baseRadius = Math.min(8 + count * 3, 26);
+        const radius = Math.max(6, baseRadius * pinScale);
+        const fontSize = Math.max(8, 14 * pinScale);
+        const labelFontSize = Math.max(7, 13 * pinScale);
         const color = info.isStore ? C.pink : REGION_COLOR(info.region);
         const px = info.x * VW;
         const py = info.y * VH;
@@ -1974,14 +1983,14 @@ function JapanMapView({ pins, currentRegion, viewBox, getPinInfo, stores, isPinM
              style={{ cursor: isPinMode ? 'grab' : undefined }}
              onMouseDown={handleDragStart}>
             {isCurrent && !isPinMode && (
-              <circle cx={px} cy={py} r={radius + 6} fill="none" stroke={color} strokeWidth="2" opacity="0.7">
-                <animate attributeName="r" from={radius} to={radius + 24} dur="1.8s" repeatCount="indefinite"/>
+              <circle cx={px} cy={py} r={radius + 6 * pinScale} fill="none" stroke={color} strokeWidth="2" opacity="0.7">
+                <animate attributeName="r" from={radius} to={radius + 24 * pinScale} dur="1.8s" repeatCount="indefinite"/>
                 <animate attributeName="opacity" from="0.8" to="0" dur="1.8s" repeatCount="indefinite"/>
               </circle>
             )}
-            <circle cx={px} cy={py} r={isPinMode ? radius + 4 : radius} fill={isPinMode ? C.yellow : color} stroke={C.bgWhite} strokeWidth={isCurrent ? 3 : 2}/>
-            <text x={px} y={py + 5} fontSize="14" fontWeight="700" fill={isPinMode ? C.ink : '#fff'} textAnchor="middle" style={{ fontFamily: FONT_DISPLAY }}>{isPinMode ? '✥' : count}</text>
-            <text x={px} y={py - radius - 10} fontSize="13" fill={isCurrent ? C.ink : C.inkLight} textAnchor="middle" fontWeight={isCurrent ? 700 : 500} style={{ fontFamily: FONT_HAND }}>
+            <circle cx={px} cy={py} r={isPinMode ? radius + 4 * pinScale : radius} fill={isPinMode ? C.yellow : color} stroke={C.bgWhite} strokeWidth={isCurrent ? 3 : 2}/>
+            <text x={px} y={py + fontSize * 0.35} fontSize={fontSize} fontWeight="700" fill={isPinMode ? C.ink : '#fff'} textAnchor="middle" style={{ fontFamily: FONT_DISPLAY }}>{isPinMode ? '✥' : count}</text>
+            <text x={px} y={py - radius - 4 * pinScale} fontSize={labelFontSize} fill={isCurrent ? C.ink : C.inkLight} textAnchor="middle" fontWeight={isCurrent ? 700 : 500} style={{ fontFamily: FONT_HAND }}>
               {info.isStore ? '🏠 ' : ''}{info.name}
             </text>
           </g>
@@ -2107,22 +2116,13 @@ function WorldMapView({ pins, posts, isPinMode, onPinDrag, svgRef, pinOverrides 
     return WORLD_COUNTRY_POS[key] || null;
   };
 
-  // ドラッグ処理
+  // ドラッグ処理（JapanMapViewと同じく生のclientX/Yを渡す）
   const handlePinDragStart = isPinMode ? (key, e) => {
     e.preventDefault();
-    const svg = svgRef?.current;
-    if (!svg) return;
-    const onMove = (ev) => {
-      const pt = svg.createSVGPoint();
-      pt.x = ev.clientX; pt.y = ev.clientY;
-      const svgPt = pt.matrixTransform(svg.getScreenCTM().inverse());
-      const nx = Math.max(0, Math.min(1, svgPt.x / 1000));
-      const ny = Math.max(0, Math.min(1, svgPt.y / 600));
-      onPinDrag?.(`world:${key}`, nx, ny);
-    };
-    const onUp = () => { window.removeEventListener('mousemove', onMove); window.removeEventListener('mouseup', onUp); };
-    window.addEventListener('mousemove', onMove);
-    window.addEventListener('mouseup', onUp);
+    const move = (ev) => onPinDrag?.(`world:${key}`, ev.clientX, ev.clientY);
+    const up = () => { window.removeEventListener('mousemove', move); window.removeEventListener('mouseup', up); };
+    window.addEventListener('mousemove', move);
+    window.addEventListener('mouseup', up);
   } : null;
 
   return (
