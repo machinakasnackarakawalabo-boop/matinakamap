@@ -77,7 +77,7 @@ const JAPAN_MAP_IMG = 'data:image/jpeg;base64,/9j/4AAQSkZJRgABAQAAAQABAAD/2wBDAA
 
 const REGION_GROUPS = ['北海道', '東北', '関東', '中部', '近畿', '中国', '四国', '九州', '沖縄'];
 
-// 愛知まつりモード用サブ地域
+// イベント地域モード（愛知）のサブ地域
 const AICHI_SUBREGIONS = ['名古屋', '尾張東部', '尾張西部', '知多', '西三河', '東三河'];
 
 const DEFAULT_STORES = {
@@ -603,7 +603,7 @@ const DEFAULT_SETTINGS = {
   pinOverrides: {},    // { prefecture_key: {x, y} } ドラッグ調整済み座標
   adminId: 'machinaka.snack.arakawalabo@gmail.com',
   adminPassword: 'Tanaka3004',
-  showAichiTab: false,          // 愛知まつりモード（タブ追加）
+  showAichiTab: false,          // イベント地域モード（愛知タブ追加）
   slideshowHiddenRegions: []    // スライドショーから除外する地域
 };
 
@@ -1258,7 +1258,7 @@ function PostForm({ onSubmit, onCancel, stores, tags: availableTags }) {
           </div>
         )}
 
-        {/* 愛知まつりモード：サブ地域選択 */}
+        {/* イベント地域モード：愛知サブ地域選択 */}
         {prefecture === 'aichi' && (
           <div style={s.field}>
             <label style={s.label}>
@@ -1550,7 +1550,7 @@ function MapView({ posts, addPost, updatePost, stores, tags, settings, updateSet
     // お店ピンを先に
     const storeNames = Object.values(stores).map(st => st.name);
     storeNames.forEach(n => { if (set.has(n)) result.push(n); });
-    // 愛知まつりモード：愛知タブを追加（投稿がある場合）
+    // イベント地域モード：愛知タブを追加（投稿がある場合）
     if (settings.showAichiTab && posts.some(p => p.prefecture === 'aichi')) {
       result.push('愛知');
     }
@@ -1711,6 +1711,8 @@ function MapView({ posts, addPost, updatePost, stores, tags, settings, updateSet
         <div style={{ ...s.mapBox, flex: `0 0 ${mapWidthPct}%`, minWidth: 0 }}>
           {currentRegion === '海外' ? (
             <WorldMapView pins={pins} currentRegion={currentRegion} posts={posts}/>
+          ) : currentRegion === '愛知' ? (
+            <AichiMapView posts={visiblePosts}/>
           ) : (
             <JapanMapView
               pins={pins}
@@ -1984,6 +1986,81 @@ function JapanMapView({ pins, currentRegion, viewBox, getPinInfo, stores, isPinM
         );
       })}
     </svg>
+  );
+}
+
+// =====================================
+// 愛知マップ表示（イベント地域モード）
+// =====================================
+// サブ地域のピン位置（aichi-map.png の幅1335 x 高900 基準で 0–1 比率）
+const AICHI_PIN_POS = {
+  '名古屋':  { x: 0.38, y: 0.55 },
+  '尾張東部':{ x: 0.47, y: 0.30 },
+  '尾張西部':{ x: 0.26, y: 0.35 },
+  '知多':    { x: 0.35, y: 0.70 },
+  '西三河':  { x: 0.60, y: 0.55 },
+  '東三河':  { x: 0.82, y: 0.42 },
+};
+
+function AichiMapView({ posts }) {
+  const subCounts = useMemo(() => {
+    const map = {};
+    (posts || []).forEach(p => {
+      if (p.aichiSubRegion) map[p.aichiSubRegion] = (map[p.aichiSubRegion] || 0) + 1;
+    });
+    return map;
+  }, [posts]);
+
+  return (
+    <div style={{ width: '100%', height: '100%', position: 'relative', background: '#f8f7f4', overflow: 'hidden', display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
+      {/* 愛知マップ画像 */}
+      <img
+        src="/aichi-map.png"
+        alt="愛知県マップ"
+        style={{ width: '100%', height: '100%', objectFit: 'contain', display: 'block', opacity: 0.85 }}
+        onError={e => { e.target.style.display = 'none'; }}
+      />
+      {/* サブ地域ピン */}
+      {Object.entries(AICHI_PIN_POS).map(([name, pos]) => {
+        const count = subCounts[name] || 0;
+        return (
+          <div key={name} style={{
+            position: 'absolute',
+            left: `${pos.x * 100}%`,
+            top: `${pos.y * 100}%`,
+            transform: 'translate(-50%, -50%)',
+            display: 'flex', flexDirection: 'column', alignItems: 'center', gap: 3,
+            pointerEvents: 'none'
+          }}>
+            {count > 0 && (
+              <div style={{
+                background: '#e84c3d', color: '#fff',
+                fontFamily: FONT_DISPLAY, fontSize: '0.875rem', fontWeight: 700,
+                width: 32, height: 32, borderRadius: '50%',
+                display: 'flex', alignItems: 'center', justifyContent: 'center',
+                boxShadow: '0 2px 8px rgba(0,0,0,0.25)',
+                border: '2px solid #fff'
+              }}>{count}</div>
+            )}
+            <div style={{
+              background: count > 0 ? 'rgba(232,76,61,0.92)' : 'rgba(60,60,60,0.55)',
+              color: '#fff',
+              fontFamily: FONT_HAND, fontSize: '0.6875rem', fontWeight: count > 0 ? 700 : 400,
+              padding: '2px 8px', borderRadius: 10,
+              whiteSpace: 'nowrap', letterSpacing: 0.5
+            }}>{name}</div>
+          </div>
+        );
+      })}
+      {/* 件数ゼロの場合のメッセージ */}
+      {posts && posts.length === 0 && (
+        <div style={{ position: 'absolute', bottom: 16, left: '50%', transform: 'translateX(-50%)',
+          background: 'rgba(255,255,255,0.9)', borderRadius: 8, padding: '6px 14px',
+          fontFamily: FONT_HAND, fontSize: '0.75rem', color: C.inkSub }}>
+          愛知の投稿がまだありません
+        </div>
+      )}
+    </div>
   );
 }
 
@@ -3766,19 +3843,19 @@ function SettingsTab({ settings, updateSettings }) {
         })}
       </div>
 
-      {/* 愛知まつりモード */}
+      {/* イベント地域モード */}
       <div style={{ marginTop: 36, marginBottom: 36 }}>
         <div style={{ fontFamily: FONT_DISPLAY, fontSize: '0.8125rem', fontWeight: 700, color: C.inkSub, letterSpacing: 3, marginBottom: 12 }}>
-          🎪 愛知まつりモード
+          🎪 イベント地域モード（愛知）
         </div>
         <div style={{ fontFamily: FONT_HAND, fontSize: '0.6875rem', color: C.inkLight, marginBottom: 14 }}>
-          ONにすると「愛知」タブが表示され、投稿時に名古屋・尾張・三河などのサブ地域を選択できるようになります
+          ONにすると「愛知」タブが表示され、投稿時に名古屋・尾張・三河などのサブ地域を選択できるようになります。今後他の地域でのイベントにも対応予定。
         </div>
         <div style={s.settingItem}>
           <div style={{ display: 'flex', gap: 14, alignItems: 'center' }}>
             <div style={{ fontSize: '1.75rem' }}>🗾</div>
             <div>
-              <div style={{ fontFamily: FONT_DISPLAY, fontSize: '0.9375rem', fontWeight: 700, letterSpacing: 1 }}>愛知タブ</div>
+              <div style={{ fontFamily: FONT_DISPLAY, fontSize: '0.9375rem', fontWeight: 700, letterSpacing: 1 }}>愛知イベント地域タブ</div>
               <div style={{ fontFamily: FONT_HAND, fontSize: '0.75rem', color: C.inkSub, marginTop: 4 }}>
                 {settings.showAichiTab ? '名古屋・尾張・三河のサブ地域選択が有効' : '通常モード（中部地方に含まれる）'}
               </div>
