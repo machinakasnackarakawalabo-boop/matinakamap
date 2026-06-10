@@ -1710,7 +1710,9 @@ function MapView({ posts, addPost, updatePost, stores, tags, settings, updateSet
       <main style={{ ...s.mapBoard, display: 'flex', gap: 0 }} ref={containerRef}>
         <div style={{ ...s.mapBox, flex: `0 0 ${mapWidthPct}%`, minWidth: 0 }}>
           {currentRegion === '海外' ? (
-            <WorldMapView pins={pins} currentRegion={currentRegion} posts={posts}/>
+            <WorldMapView pins={pins} currentRegion={currentRegion} posts={posts}
+              isPinMode={isPinMode} onPinDrag={handlePinDrag}
+              svgRef={mapSvgRef} pinOverrides={settings?.pinOverrides}/>
           ) : currentRegion === '愛知' ? (
             <AichiMapView posts={visiblePosts}/>
           ) : (
@@ -1727,7 +1729,7 @@ function MapView({ posts, addPost, updatePost, stores, tags, settings, updateSet
           )}
 
           {/* ピン調整モード：一括オフセットUI */}
-          {isPinMode && currentRegion !== '海外' && (
+          {isPinMode && currentRegion !== '愛知' && (
             <div style={{ position: 'absolute', bottom: 16, left: 16, zIndex: 20, background: 'rgba(255,255,255,0.95)', borderRadius: 10, padding: '10px 12px', boxShadow: '0 4px 16px rgba(0,0,0,0.15)', display: 'flex', flexDirection: 'column', gap: 6 }}>
               <div style={{ fontFamily: FONT_HAND, fontSize: '0.6875rem', color: C.inkSub, marginBottom: 2, fontWeight: 700 }}>全ピン一括移動</div>
               <div style={{ display: 'flex', gap: 4, justifyContent: 'center' }}>
@@ -1772,7 +1774,7 @@ function MapView({ posts, addPost, updatePost, stores, tags, settings, updateSet
           {/* スライドショー／固定ボタン（右上） */}
           {activeRegions.length > 0 && (
             <div style={{ ...s.modeToggle, position: 'absolute', top: 16, right: 16, zIndex: 10 }}>
-              {currentRegion !== '海外' && (
+              {currentRegion !== '愛知' && (
                 <button onClick={() => setIsPinMode(v => !v)}
                   style={{ ...s.modeBtn, ...(isPinMode ? { background: C.yellow, color: C.ink } : {}) }}>
                   📍 ピン調整
@@ -2067,7 +2069,7 @@ function AichiMapView({ posts }) {
 // =====================================
 // 世界地図表示（海外モード）
 // =====================================
-function WorldMapView({ pins, posts }) {
+function WorldMapView({ pins, posts, isPinMode, onPinDrag, svgRef, pinOverrides }) {
   const countryPins = useMemo(() => {
     // { posKey: { count, label, pos } }
     const map = {};
@@ -2097,8 +2099,34 @@ function WorldMapView({ pins, posts }) {
     return map;
   }, [posts]);
 
+  // ピン位置（pinOverridesがあれば上書き）
+  const getWorldPinPos = (key) => {
+    const overrideKey = `world:${key}`;
+    const ov = pinOverrides?.[overrideKey];
+    if (ov) return { x: ov.x * 1000, y: ov.y * 600 };
+    return WORLD_COUNTRY_POS[key] || null;
+  };
+
+  // ドラッグ処理
+  const handlePinDragStart = isPinMode ? (key, e) => {
+    e.preventDefault();
+    const svg = svgRef?.current;
+    if (!svg) return;
+    const onMove = (ev) => {
+      const pt = svg.createSVGPoint();
+      pt.x = ev.clientX; pt.y = ev.clientY;
+      const svgPt = pt.matrixTransform(svg.getScreenCTM().inverse());
+      const nx = Math.max(0, Math.min(1, svgPt.x / 1000));
+      const ny = Math.max(0, Math.min(1, svgPt.y / 600));
+      onPinDrag?.(`world:${key}`, nx, ny);
+    };
+    const onUp = () => { window.removeEventListener('mousemove', onMove); window.removeEventListener('mouseup', onUp); };
+    window.addEventListener('mousemove', onMove);
+    window.addEventListener('mouseup', onUp);
+  } : null;
+
   return (
-    <svg viewBox="0 0 1000 600" style={s.mapSvg} preserveAspectRatio="xMidYMid meet">
+    <svg ref={svgRef} viewBox="0 0 1000 600" style={{ ...s.mapSvg, cursor: isPinMode ? 'crosshair' : undefined }} preserveAspectRatio="xMidYMid meet">
       <defs>
         <filter id="worldShadow" x="-50%" y="-50%" width="200%" height="200%">
           <feGaussianBlur in="SourceAlpha" stdDeviation="2"/>
@@ -2149,18 +2177,26 @@ function WorldMapView({ pins, posts }) {
 
 
       {/* 国別ピン */}
-      {Object.entries(countryPins).map(([key, { count, label, pos }]) => {
+      {Object.entries(countryPins).map(([key, { count, label, pos: fbPos }]) => {
+        const pos = key.startsWith('_fb_') ? fbPos : getWorldPinPos(key);
         if (!pos) return null;
+        const px = pos.x;
+        const py = pos.y;
+        if (px == null || py == null) return null;
         const r = Math.min(10 + count * 3, 28);
         return (
-          <g key={key} filter="url(#worldShadow)">
-            <circle cx={pos.x} cy={pos.y} r={r + 5} fill="none" stroke={C.green} strokeWidth="2" opacity="0.5">
-              <animate attributeName="r" from={r} to={r + 18} dur="2s" repeatCount="indefinite"/>
-              <animate attributeName="opacity" from="0.6" to="0" dur="2s" repeatCount="indefinite"/>
-            </circle>
-            <circle cx={pos.x} cy={pos.y} r={r} fill={C.green} stroke={C.bgWhite} strokeWidth="3"/>
-            <text x={pos.x} y={pos.y + 5} fontSize="13" fontWeight="700" fill="#fff" textAnchor="middle" style={{ fontFamily: FONT_DISPLAY }}>{count}</text>
-            <text x={pos.x} y={pos.y - r - 7} fontSize="11" fontWeight="700" fill={C.ink} textAnchor="middle" style={{ fontFamily: FONT_HAND }}>{label}</text>
+          <g key={key} filter="url(#worldShadow)"
+            style={{ cursor: isPinMode ? 'grab' : undefined }}
+            onMouseDown={handlePinDragStart ? (e) => handlePinDragStart(key, e) : undefined}>
+            {!isPinMode && (
+              <circle cx={px} cy={py} r={r + 5} fill="none" stroke={C.green} strokeWidth="2" opacity="0.5">
+                <animate attributeName="r" from={r} to={r + 18} dur="2s" repeatCount="indefinite"/>
+                <animate attributeName="opacity" from="0.6" to="0" dur="2s" repeatCount="indefinite"/>
+              </circle>
+            )}
+            <circle cx={px} cy={py} r={isPinMode ? r + 4 : r} fill={isPinMode ? C.yellow : C.green} stroke={C.bgWhite} strokeWidth="3"/>
+            <text x={px} y={py + 5} fontSize="13" fontWeight="700" fill={isPinMode ? C.ink : '#fff'} textAnchor="middle" style={{ fontFamily: FONT_DISPLAY }}>{isPinMode ? '✥' : count}</text>
+            <text x={px} y={py - r - 7} fontSize="11" fontWeight="700" fill={C.ink} textAnchor="middle" style={{ fontFamily: FONT_HAND }}>{label}</text>
           </g>
         );
       })}
