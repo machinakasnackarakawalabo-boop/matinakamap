@@ -77,6 +77,9 @@ const JAPAN_MAP_IMG = 'data:image/jpeg;base64,/9j/4AAQSkZJRgABAQAAAQABAAD/2wBDAA
 
 const REGION_GROUPS = ['北海道', '東北', '関東', '中部', '近畿', '中国', '四国', '九州', '沖縄'];
 
+// 愛知まつりモード用サブ地域
+const AICHI_SUBREGIONS = ['名古屋', '尾張東部', '尾張西部', '知多', '西三河', '東三河'];
+
 const DEFAULT_STORES = {
   arakawa: { id: 'arakawa', name: '荒川区', fullName: 'ARAKAWA LABO 本店', parentPref: 'tokyo', x: 0.644, y: 0.581, description: 'ARAKAWA LABO 本店' },
   iwanuma: { id: 'iwanuma', name: '岩沼市', fullName: '駅中スナック 岩沼店', parentPref: 'miyagi', x: 0.696, y: 0.438, description: '駅中スナック 岩沼店' },
@@ -94,7 +97,8 @@ const REGION_BOUNDS = {
   '四国':    [0.28, 0.65, 0.46, 0.80],
   '九州':    [0.10, 0.65, 0.32, 0.86],
   '沖縄':    [0.70, 0.78, 0.92, 0.96],
-  '海外':    [0.02, 0.02, 0.22, 0.20]
+  '海外':    [0.02, 0.02, 0.22, 0.20],
+  '愛知':    [0.49, 0.57, 0.66, 0.72]
 };
 
 // 世界地図上の国別ピン座標（viewBox 0 0 1000 600）
@@ -598,7 +602,9 @@ const DEFAULT_SETTINGS = {
   fontSize: '中',      // 文字サイズ: 小/中/大/特大
   pinOverrides: {},    // { prefecture_key: {x, y} } ドラッグ調整済み座標
   adminId: 'machinaka.snack.arakawalabo@gmail.com',
-  adminPassword: 'Tanaka3004'
+  adminPassword: 'Tanaka3004',
+  showAichiTab: false,          // 愛知まつりモード（タブ追加）
+  slideshowHiddenRegions: []    // スライドショーから除外する地域
 };
 
 const FONT_SIZE_ZOOM = { '小': 0.82, '中': 1.0, '大': 1.4, '特大': 1.8 };
@@ -1028,8 +1034,9 @@ function PostForm({ onSubmit, onCancel, stores, tags: availableTags }) {
   const [ageGroup, setAgeGroup] = useState('');    // 年齢層
   const [gender, setGender] = useState('');        // 性別
   const [tags, setTags] = useState([]);            // タグ
-  const [country, setCountry] = useState('');      // 海外の場合の国名
-  const [url, setUrl] = useState('');               // おすすめ場所のURL（任意）
+  const [country, setCountry] = useState('');           // 海外の場合の国名
+  const [aichiSubRegion, setAichiSubRegion] = useState(''); // 愛知サブ地域
+  const [url, setUrl] = useState('');                   // おすすめ場所のURL（任意）
   const [submitting, setSubmitting] = useState(false);
   const [success, setSuccess] = useState(null);
 
@@ -1043,7 +1050,7 @@ function PostForm({ onSubmit, onCancel, stores, tags: availableTags }) {
     if (savedGender) setGender(savedGender);
   }, []);
 
-  useEffect(() => { setStoreId(''); }, [prefecture]);
+  useEffect(() => { setStoreId(''); setAichiSubRegion(''); }, [prefecture]);
 
   const availableStores = useMemo(
     () => Object.values(stores).filter(s => s.parentPref === prefecture),
@@ -1173,6 +1180,7 @@ function PostForm({ onSubmit, onCancel, stores, tags: availableTags }) {
       gender: gender || null,
       tags: tags,
       url: url.trim() || null,
+      aichiSubRegion: prefecture === 'aichi' && aichiSubRegion ? aichiSubRegion : null,
       likes: [],
       comments: [],
       timestamp: Date.now()
@@ -1247,6 +1255,31 @@ function PostForm({ onSubmit, onCancel, stores, tags: availableTags }) {
             </label>
             <div style={s.hint}>国名の最初の文字を入力すると候補が出ます</div>
             <CountryPicker value={country} onChange={setCountry}/>
+          </div>
+        )}
+
+        {/* 愛知まつりモード：サブ地域選択 */}
+        {prefecture === 'aichi' && (
+          <div style={s.field}>
+            <label style={s.label}>
+              <span style={{ ...s.labelDot, background: '#e84c3d' }} />愛知の地域
+              <span style={s.optional}>任意</span>
+            </label>
+            <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap' }}>
+              {AICHI_SUBREGIONS.map(sr => (
+                <button key={sr} type="button"
+                  onClick={() => setAichiSubRegion(prev => prev === sr ? '' : sr)}
+                  style={{
+                    padding: '8px 14px', borderRadius: 20, border: `1.5px solid ${aichiSubRegion === sr ? '#e84c3d' : C.line}`,
+                    background: aichiSubRegion === sr ? '#ffe8e6' : C.bgOff,
+                    color: aichiSubRegion === sr ? '#e84c3d' : C.inkSub,
+                    fontFamily: FONT_HAND, fontSize: '0.875rem', fontWeight: aichiSubRegion === sr ? 700 : 400,
+                    cursor: 'pointer'
+                  }}>
+                  {sr}
+                </button>
+              ))}
+            </div>
           </div>
         )}
 
@@ -1396,10 +1429,12 @@ function PostForm({ onSubmit, onCancel, stores, tags: availableTags }) {
             </label>
             <div style={s.hint}>食べログ・Googleマップ・ホームページなど</div>
             <input
-              type="url"
+              type="text"
+              inputMode="url"
               value={url}
               onChange={e => setUrl(e.target.value)}
-              placeholder="https://..."
+              placeholder="https://"
+              autoComplete="off"
               style={{ ...s.input, fontSize: '0.875rem' }}
             />
           </div>
@@ -1515,20 +1550,30 @@ function MapView({ posts, addPost, updatePost, stores, tags, settings, updateSet
     // お店ピンを先に
     const storeNames = Object.values(stores).map(st => st.name);
     storeNames.forEach(n => { if (set.has(n)) result.push(n); });
+    // 愛知まつりモード：愛知タブを追加（投稿がある場合）
+    if (settings.showAichiTab && posts.some(p => p.prefecture === 'aichi')) {
+      result.push('愛知');
+    }
     REGION_GROUPS.forEach(r => { if (set.has(r)) result.push(r); });
     if (set.has('海外')) result.push('海外');
     return result;
-  }, [posts, stores]);
+  }, [posts, stores, settings.showAichiTab]);
+
+  // スライドショー用に非表示設定を除いた地域リスト
+  const slideshowRegions = useMemo(() => {
+    const hidden = settings.slideshowHiddenRegions || [];
+    return activeRegions.filter(r => !hidden.includes(r));
+  }, [activeRegions, settings.slideshowHiddenRegions]);
 
   // スライドショー
   useEffect(() => {
-    if (!slideshow || activeRegions.length === 0) return;
-    setRegionIdx(prev => prev % activeRegions.length);
+    if (!slideshow || slideshowRegions.length === 0) return;
+    setRegionIdx(prev => prev % slideshowRegions.length);
     const interval = setInterval(() => {
-      setRegionIdx(prev => (prev + 1) % activeRegions.length);
+      setRegionIdx(prev => (prev + 1) % slideshowRegions.length);
     }, 10000);
     return () => clearInterval(interval);
-  }, [slideshow, activeRegions.length]);
+  }, [slideshow, slideshowRegions.length]);
 
   useEffect(() => {
     const t = setInterval(() => setTime(new Date()), 30000);
@@ -1537,7 +1582,7 @@ function MapView({ posts, addPost, updatePost, stores, tags, settings, updateSet
 
   const currentRegion = !slideshow && pinnedRegion
     ? pinnedRegion
-    : (activeRegions[regionIdx] || '全国');
+    : (slideshowRegions[regionIdx] || activeRegions[0] || '全国');
   const regionColor = REGION_COLOR(currentRegion);
 
   const viewBox = useMemo(() => {
@@ -1565,7 +1610,14 @@ function MapView({ posts, addPost, updatePost, stores, tags, settings, updateSet
 
   // 表示する投稿
   const visiblePosts = useMemo(() => {
-    let list = currentRegion === '全国' ? posts : posts.filter(p => p.region === currentRegion);
+    let list;
+    if (currentRegion === '全国') {
+      list = posts;
+    } else if (currentRegion === '愛知') {
+      list = posts.filter(p => p.prefecture === 'aichi');
+    } else {
+      list = posts.filter(p => p.region === currentRegion);
+    }
     if (prefFilter) list = list.filter(p => p.prefecture === prefFilter || p.storeId === prefFilter);
     if (tagFilter) list = list.filter(p => (p.tags || []).includes(tagFilter));
     if (photoOnly) list = list.filter(p => !!p.photo);
@@ -2516,6 +2568,15 @@ function ScrollingList({ posts, regionColor, onPostClick, tagMap, noAutoScroll =
                   {post.message}
                 </div>
 
+                {/* 愛知サブ地域バッジ */}
+                {post.aichiSubRegion && (
+                  <span style={{ display: 'inline-block', marginTop: 6, padding: '3px 10px', borderRadius: 12,
+                    background: '#ffe8e6', border: '1px solid #e84c3d', color: '#e84c3d',
+                    fontFamily: FONT_HAND, fontSize: '0.6875rem', fontWeight: 700 }}>
+                    📍 {post.aichiSubRegion}
+                  </span>
+                )}
+
                 {/* URLリンク */}
                 {post.url && (
                   <div style={{ marginTop: 8 }}>
@@ -3435,8 +3496,8 @@ function PostsTab({ posts, removePost, removeAllPosts, updatePost, stores }) {
 
               {/* URLリンク */}
               {fld('URLリンク',
-                <input type="url" value={editForm.url || ''} onChange={e => setEditForm(f => ({ ...f, url: e.target.value }))}
-                  placeholder="https://..." style={{ ...inp }}/>
+                <input type="text" inputMode="url" value={editForm.url || ''} onChange={e => setEditForm(f => ({ ...f, url: e.target.value }))}
+                  placeholder="https://" style={{ ...inp }}/>
               )}
 
               {/* 日時 */}
@@ -3703,6 +3764,64 @@ function SettingsTab({ settings, updateSettings }) {
             </button>
           );
         })}
+      </div>
+
+      {/* 愛知まつりモード */}
+      <div style={{ marginTop: 36, marginBottom: 36 }}>
+        <div style={{ fontFamily: FONT_DISPLAY, fontSize: '0.8125rem', fontWeight: 700, color: C.inkSub, letterSpacing: 3, marginBottom: 12 }}>
+          🎪 愛知まつりモード
+        </div>
+        <div style={{ fontFamily: FONT_HAND, fontSize: '0.6875rem', color: C.inkLight, marginBottom: 14 }}>
+          ONにすると「愛知」タブが表示され、投稿時に名古屋・尾張・三河などのサブ地域を選択できるようになります
+        </div>
+        <div style={s.settingItem}>
+          <div style={{ display: 'flex', gap: 14, alignItems: 'center' }}>
+            <div style={{ fontSize: '1.75rem' }}>🗾</div>
+            <div>
+              <div style={{ fontFamily: FONT_DISPLAY, fontSize: '0.9375rem', fontWeight: 700, letterSpacing: 1 }}>愛知タブ</div>
+              <div style={{ fontFamily: FONT_HAND, fontSize: '0.75rem', color: C.inkSub, marginTop: 4 }}>
+                {settings.showAichiTab ? '名古屋・尾張・三河のサブ地域選択が有効' : '通常モード（中部地方に含まれる）'}
+              </div>
+            </div>
+          </div>
+          <button onClick={() => updateSettings({ showAichiTab: !settings.showAichiTab })} style={{
+            ...s.toggleBtn,
+            background: settings.showAichiTab ? '#e84c3d' : C.bgGray,
+            color: settings.showAichiTab ? '#fff' : C.inkSub
+          }}>
+            {settings.showAichiTab ? '有効中' : '無効'}
+          </button>
+        </div>
+      </div>
+
+      {/* スライドショー地域設定 */}
+      <div style={{ marginBottom: 36 }}>
+        <div style={{ fontFamily: FONT_DISPLAY, fontSize: '0.8125rem', fontWeight: 700, color: C.inkSub, letterSpacing: 3, marginBottom: 12 }}>
+          ▶ スライドショーに表示する地域
+        </div>
+        <div style={{ fontFamily: FONT_HAND, fontSize: '0.6875rem', color: C.inkLight, marginBottom: 14 }}>
+          ※ チェックを外した地域はスライドショーから除外されます（タブからは引き続き見られます）
+        </div>
+        <div style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
+          {['全国', ...(settings.showAichiTab ? ['愛知'] : []), ...REGION_GROUPS, '海外'].map(r => {
+            const hidden = (settings.slideshowHiddenRegions || []).includes(r);
+            return (
+              <div key={r} style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', padding: '8px 12px', background: C.bgOff, borderRadius: 8, border: `1px solid ${C.line}` }}>
+                <span style={{ fontFamily: FONT_HAND, fontSize: '0.875rem', color: C.ink }}>{r}</span>
+                <button onClick={() => {
+                  const cur = settings.slideshowHiddenRegions || [];
+                  updateSettings({ slideshowHiddenRegions: hidden ? cur.filter(x => x !== r) : [...cur, r] });
+                }} style={{
+                  padding: '4px 12px', borderRadius: 14, border: `1px solid ${hidden ? C.line : C.green}`,
+                  background: hidden ? C.bgGray : C.greenLight, color: hidden ? C.inkSub : C.green,
+                  fontFamily: FONT_HAND, fontSize: '0.75rem', fontWeight: 700, cursor: 'pointer'
+                }}>
+                  {hidden ? '非表示' : '表示中'}
+                </button>
+              </div>
+            );
+          })}
+        </div>
       </div>
 
       {/* ログイン情報変更 */}
