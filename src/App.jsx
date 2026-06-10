@@ -1029,6 +1029,7 @@ function PostForm({ onSubmit, onCancel, stores, tags: availableTags }) {
   const [gender, setGender] = useState('');        // 性別
   const [tags, setTags] = useState([]);            // タグ
   const [country, setCountry] = useState('');      // 海外の場合の国名
+  const [url, setUrl] = useState('');               // おすすめ場所のURL（任意）
   const [submitting, setSubmitting] = useState(false);
   const [success, setSuccess] = useState(null);
 
@@ -1171,6 +1172,7 @@ function PostForm({ onSubmit, onCancel, stores, tags: availableTags }) {
       ageGroup: ageGroup || null,
       gender: gender || null,
       tags: tags,
+      url: url.trim() || null,
       likes: [],
       comments: [],
       timestamp: Date.now()
@@ -1384,6 +1386,22 @@ function PostForm({ onSubmit, onCancel, stores, tags: availableTags }) {
                 <option value="答えない">答えない</option>
               </select>
             </div>
+          </div>
+
+          {/* URLリンク */}
+          <div style={s.field}>
+            <label style={s.label}>
+              <span style={{ ...s.labelDot, background: C.green }} />おすすめ場所のリンク
+              <span style={s.optional}>任意</span>
+            </label>
+            <div style={s.hint}>食べログ・Googleマップ・ホームページなど</div>
+            <input
+              type="url"
+              value={url}
+              onChange={e => setUrl(e.target.value)}
+              placeholder="https://..."
+              style={{ ...s.input, fontSize: '0.875rem' }}
+            />
           </div>
 
           {/* （タグ選択は必須項目として上部に移動） */}
@@ -2271,6 +2289,16 @@ function PostDetailModal({ post, updatePost, tagMap, onClose }) {
 
         <div style={{ fontFamily: FONT_HAND, fontSize: '1rem', lineHeight: 1.7, color: C.ink, marginBottom: 8 }}>{post.message}</div>
 
+        {post.url && (
+          <a href={post.url} target="_blank" rel="noopener noreferrer"
+            style={{ display: 'inline-flex', alignItems: 'center', gap: 6, marginBottom: 12,
+              padding: '8px 14px', borderRadius: 20, background: C.greenLight, border: `1px solid ${C.green}`,
+              color: C.green, fontFamily: FONT_HAND, fontSize: '0.8125rem', fontWeight: 700,
+              textDecoration: 'none', wordBreak: 'break-all' }}>
+            🔗 詳しくはこちら
+          </a>
+        )}
+
         <div style={{ display: 'flex', gap: 6, marginBottom: 12, flexWrap: 'wrap' }}>
           {post.ageGroup && <span style={s.demographicTag}>{post.ageGroup}</span>}
           {post.gender && <span style={s.demographicTag}>{post.gender}</span>}
@@ -2487,6 +2515,20 @@ function ScrollingList({ posts, regionColor, onPostClick, tagMap, noAutoScroll =
                 <div style={{ fontSize: '1.125rem', lineHeight: 1.7, fontWeight: 500, wordBreak: 'break-word' }}>
                   {post.message}
                 </div>
+
+                {/* URLリンク */}
+                {post.url && (
+                  <div style={{ marginTop: 8 }}>
+                    <a href={post.url} target="_blank" rel="noopener noreferrer"
+                      onClick={e => e.stopPropagation()}
+                      style={{ display: 'inline-flex', alignItems: 'center', gap: 4,
+                        padding: '4px 10px', borderRadius: 14, background: C.greenLight,
+                        color: C.green, fontFamily: FONT_HAND, fontSize: '0.75rem', fontWeight: 700,
+                        textDecoration: 'none', border: `1px solid ${C.green}` }}>
+                      🔗 詳しくはこちら
+                    </a>
+                  </div>
+                )}
 
                 {/* 年齢層・性別タグ */}
                 {(post.ageGroup || post.gender) && (
@@ -3204,6 +3246,7 @@ function PostsTab({ posts, removePost, removeAllPosts, updatePost, stores }) {
       gender:     post.gender     || '',
       photos:     post.photos || (post.photo ? [post.photo] : []),
       timestamp:  post.timestamp  || Date.now(),
+      url:        post.url        || '',
     });
   };
 
@@ -3226,6 +3269,7 @@ function PostsTab({ posts, removePost, removeAllPosts, updatePost, stores }) {
         photos:        editForm.photos.length > 0 ? editForm.photos : null,
         photo:         editForm.photos[0] || null,
         timestamp:     editForm.timestamp,
+        url:           editForm.url.trim() || null,
       };
     });
     setEditingPost(null);
@@ -3387,6 +3431,12 @@ function PostsTab({ posts, removePost, removeAllPosts, updatePost, stores }) {
                   <option value="">未設定</option>
                   {GENDER_OPTIONS.map(g => <option key={g} value={g}>{g}</option>)}
                 </select>
+              )}
+
+              {/* URLリンク */}
+              {fld('URLリンク',
+                <input type="url" value={editForm.url || ''} onChange={e => setEditForm(f => ({ ...f, url: e.target.value }))}
+                  placeholder="https://..." style={{ ...inp }}/>
               )}
 
               {/* 日時 */}
