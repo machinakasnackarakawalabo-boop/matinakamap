@@ -1748,7 +1748,9 @@ function MapView({ posts, addPost, updatePost, stores, tags, settings, updateSet
           ) : currentRegion === '愛知' ? (
             <AichiMapView posts={visiblePosts}/>
           ) : currentRegion === '荒川区' ? (
-            <ArakawaMapView posts={visiblePosts}/>
+            <ArakawaMapView posts={visiblePosts}
+              isPinMode={isPinMode} onPinDrag={handlePinDrag}
+              containerRef={mapSvgRef} pinOverrides={settings?.pinOverrides}/>
           ) : (
             <JapanMapView
               pins={pins}
@@ -1763,7 +1765,7 @@ function MapView({ posts, addPost, updatePost, stores, tags, settings, updateSet
           )}
 
           {/* ピン調整モード：一括オフセットUI */}
-          {isPinMode && currentRegion !== '愛知' && (
+          {isPinMode && currentRegion !== '愛知' && currentRegion !== '荒川区' && (
             <div style={{ position: 'absolute', bottom: 16, left: 16, zIndex: 20, background: 'rgba(255,255,255,0.95)', borderRadius: 10, padding: '10px 12px', boxShadow: '0 4px 16px rgba(0,0,0,0.15)', display: 'flex', flexDirection: 'column', gap: 6 }}>
               <div style={{ fontFamily: FONT_HAND, fontSize: '0.6875rem', color: C.inkSub, marginBottom: 2, fontWeight: 700 }}>全ピン一括移動</div>
               <div style={{ display: 'flex', gap: 4, justifyContent: 'center' }}>
@@ -2121,7 +2123,7 @@ const ARAKAWA_PIN_POS = {
   '南千住':  { x: 0.74, y: 0.65 },
 };
 
-function ArakawaMapView({ posts }) {
+function ArakawaMapView({ posts, isPinMode, onPinDrag, containerRef, pinOverrides }) {
   const subCounts = useMemo(() => {
     const map = {};
     (posts || []).forEach(p => {
@@ -2133,37 +2135,61 @@ function ArakawaMapView({ posts }) {
   const pinColor = C.pink;
 
   return (
-    <div style={{ width: '100%', height: '100%', position: 'relative', background: '#f8f7f4', overflow: 'hidden', display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
+    <div ref={containerRef} style={{ width: '100%', height: '100%', position: 'relative', background: '#f8f7f4', overflow: 'hidden', display: 'flex', alignItems: 'center', justifyContent: 'center', cursor: isPinMode ? 'crosshair' : undefined }}>
       <img
         src="/arakawa-map.png"
         alt="荒川区マップ"
-        style={{ width: '100%', height: '100%', objectFit: 'contain', display: 'block', opacity: 0.85 }}
+        style={{ width: '100%', height: '100%', objectFit: 'contain', display: 'block', opacity: isPinMode ? 0.6 : 0.85 }}
         onError={e => { e.target.style.display = 'none'; }}
       />
       {Object.entries(ARAKAWA_PIN_POS).map(([name, pos]) => {
+        const overrideKey = `arakawa:${name}`;
+        const ov = pinOverrides?.[overrideKey];
+        const px = ov ? ov.x : pos.x;
+        const py = ov ? ov.y : pos.y;
         const count = subCounts[name] || 0;
+
+        const handleMouseDown = isPinMode ? (e) => {
+          e.preventDefault();
+          const move = (ev) => onPinDrag?.(overrideKey, ev.clientX, ev.clientY);
+          const up = () => { window.removeEventListener('mousemove', move); window.removeEventListener('mouseup', up); };
+          window.addEventListener('mousemove', move);
+          window.addEventListener('mouseup', up);
+        } : undefined;
+
         return (
-          <div key={name} style={{
-            position: 'absolute',
-            left: `${pos.x * 100}%`,
-            top: `${pos.y * 100}%`,
-            transform: 'translate(-50%, -50%)',
-            display: 'flex', flexDirection: 'column', alignItems: 'center', gap: 3,
-            pointerEvents: 'none'
-          }}>
-            {count > 0 && (
+          <div key={name}
+            onMouseDown={handleMouseDown}
+            style={{
+              position: 'absolute',
+              left: `${px * 100}%`,
+              top: `${py * 100}%`,
+              transform: 'translate(-50%, -50%)',
+              display: 'flex', flexDirection: 'column', alignItems: 'center', gap: 3,
+              pointerEvents: isPinMode ? 'auto' : 'none',
+              cursor: isPinMode ? 'grab' : undefined,
+              zIndex: isPinMode ? 10 : undefined
+            }}>
+            {isPinMode ? (
+              <div style={{
+                background: C.yellow, color: C.ink,
+                fontFamily: FONT_DISPLAY, fontSize: '1rem', fontWeight: 700,
+                width: 32, height: 32, borderRadius: '50%',
+                display: 'flex', alignItems: 'center', justifyContent: 'center',
+                boxShadow: '0 2px 8px rgba(0,0,0,0.25)', border: '2px solid #fff'
+              }}>✥</div>
+            ) : count > 0 ? (
               <div style={{
                 background: pinColor, color: '#fff',
                 fontFamily: FONT_DISPLAY, fontSize: '0.875rem', fontWeight: 700,
                 width: 32, height: 32, borderRadius: '50%',
                 display: 'flex', alignItems: 'center', justifyContent: 'center',
-                boxShadow: '0 2px 8px rgba(0,0,0,0.25)',
-                border: '2px solid #fff'
+                boxShadow: '0 2px 8px rgba(0,0,0,0.25)', border: '2px solid #fff'
               }}>{count}</div>
-            )}
+            ) : null}
             <div style={{
-              background: count > 0 ? 'rgba(231,76,109,0.92)' : 'rgba(60,60,60,0.55)',
-              color: '#fff',
+              background: isPinMode ? 'rgba(220,180,0,0.92)' : (count > 0 ? 'rgba(231,76,109,0.92)' : 'rgba(60,60,60,0.55)'),
+              color: isPinMode ? C.ink : '#fff',
               fontFamily: FONT_HAND, fontSize: '0.6875rem', fontWeight: count > 0 ? 700 : 400,
               padding: '2px 8px', borderRadius: 10,
               whiteSpace: 'nowrap', letterSpacing: 0.5
