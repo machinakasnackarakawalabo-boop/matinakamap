@@ -1746,7 +1746,9 @@ function MapView({ posts, addPost, updatePost, stores, tags, settings, updateSet
               isPinMode={isPinMode} onPinDrag={handlePinDrag}
               svgRef={mapSvgRef} pinOverrides={settings?.pinOverrides}/>
           ) : currentRegion === '愛知' ? (
-            <AichiMapView posts={visiblePosts}/>
+            <AichiMapView posts={visiblePosts}
+              isPinMode={isPinMode} onPinDrag={handlePinDrag}
+              containerRef={mapSvgRef} pinOverrides={settings?.pinOverrides}/>
           ) : currentRegion === '荒川区' ? (
             <ArakawaMapView posts={visiblePosts}
               isPinMode={isPinMode} onPinDrag={handlePinDrag}
@@ -1810,12 +1812,10 @@ function MapView({ posts, addPost, updatePost, stores, tags, settings, updateSet
           {/* スライドショー／固定ボタン（右上） */}
           {activeRegions.length > 0 && (
             <div style={{ ...s.modeToggle, position: 'absolute', top: 16, right: 16, zIndex: 10 }}>
-              {currentRegion !== '愛知' && (
-                <button onClick={() => setIsPinMode(v => !v)}
-                  style={{ ...s.modeBtn, ...(isPinMode ? { background: C.yellow, color: C.ink } : {}) }}>
-                  📍 ピン調整
-                </button>
-              )}
+              <button onClick={() => setIsPinMode(v => !v)}
+                style={{ ...s.modeBtn, ...(isPinMode ? { background: C.yellow, color: C.ink } : {}) }}>
+                📍 ピン調整
+              </button>
               <button onClick={() => setSlideshow(true)} style={{ ...s.modeBtn, ...(slideshow ? s.modeBtnActive : {}) }}>
                 ▶ スライドショー
               </button>
@@ -2049,7 +2049,7 @@ const AICHI_PIN_POS = {
   '東三河':  { x: 0.82, y: 0.42 },
 };
 
-function AichiMapView({ posts }) {
+function AichiMapView({ posts, isPinMode, onPinDrag, containerRef, pinOverrides }) {
   const subCounts = useMemo(() => {
     const map = {};
     (posts || []).forEach(p => {
@@ -2059,39 +2059,61 @@ function AichiMapView({ posts }) {
   }, [posts]);
 
   return (
-    <div style={{ width: '100%', height: '100%', position: 'relative', background: '#f8f7f4', overflow: 'hidden', display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
-      {/* 愛知マップ画像 */}
+    <div ref={containerRef} style={{ width: '100%', height: '100%', position: 'relative', background: '#f8f7f4', overflow: 'hidden', display: 'flex', alignItems: 'center', justifyContent: 'center', cursor: isPinMode ? 'crosshair' : undefined }}>
       <img
         src="/aichi-map.png"
         alt="愛知県マップ"
-        style={{ width: '100%', height: '100%', objectFit: 'contain', display: 'block', opacity: 0.85 }}
+        style={{ width: '100%', height: '100%', objectFit: 'contain', display: 'block', opacity: isPinMode ? 0.6 : 0.85 }}
         onError={e => { e.target.style.display = 'none'; }}
       />
-      {/* サブ地域ピン */}
       {Object.entries(AICHI_PIN_POS).map(([name, pos]) => {
+        const overrideKey = `aichi:${name}`;
+        const ov = pinOverrides?.[overrideKey];
+        const px = ov ? ov.x : pos.x;
+        const py = ov ? ov.y : pos.y;
         const count = subCounts[name] || 0;
+
+        const handleMouseDown = isPinMode ? (e) => {
+          e.preventDefault();
+          const move = (ev) => onPinDrag?.(overrideKey, ev.clientX, ev.clientY);
+          const up = () => { window.removeEventListener('mousemove', move); window.removeEventListener('mouseup', up); };
+          window.addEventListener('mousemove', move);
+          window.addEventListener('mouseup', up);
+        } : undefined;
+
         return (
-          <div key={name} style={{
-            position: 'absolute',
-            left: `${pos.x * 100}%`,
-            top: `${pos.y * 100}%`,
-            transform: 'translate(-50%, -50%)',
-            display: 'flex', flexDirection: 'column', alignItems: 'center', gap: 3,
-            pointerEvents: 'none'
-          }}>
-            {count > 0 && (
+          <div key={name}
+            onMouseDown={handleMouseDown}
+            style={{
+              position: 'absolute',
+              left: `${px * 100}%`,
+              top: `${py * 100}%`,
+              transform: 'translate(-50%, -50%)',
+              display: 'flex', flexDirection: 'column', alignItems: 'center', gap: 3,
+              pointerEvents: isPinMode ? 'auto' : 'none',
+              cursor: isPinMode ? 'grab' : undefined,
+              zIndex: isPinMode ? 10 : undefined
+            }}>
+            {isPinMode ? (
+              <div style={{
+                background: C.yellow, color: C.ink,
+                fontFamily: FONT_DISPLAY, fontSize: '1rem', fontWeight: 700,
+                width: 32, height: 32, borderRadius: '50%',
+                display: 'flex', alignItems: 'center', justifyContent: 'center',
+                boxShadow: '0 2px 8px rgba(0,0,0,0.25)', border: '2px solid #fff'
+              }}>✥</div>
+            ) : count > 0 ? (
               <div style={{
                 background: '#e84c3d', color: '#fff',
                 fontFamily: FONT_DISPLAY, fontSize: '0.875rem', fontWeight: 700,
                 width: 32, height: 32, borderRadius: '50%',
                 display: 'flex', alignItems: 'center', justifyContent: 'center',
-                boxShadow: '0 2px 8px rgba(0,0,0,0.25)',
-                border: '2px solid #fff'
+                boxShadow: '0 2px 8px rgba(0,0,0,0.25)', border: '2px solid #fff'
               }}>{count}</div>
-            )}
+            ) : null}
             <div style={{
-              background: count > 0 ? 'rgba(232,76,61,0.92)' : 'rgba(60,60,60,0.55)',
-              color: '#fff',
+              background: isPinMode ? 'rgba(220,180,0,0.92)' : (count > 0 ? 'rgba(232,76,61,0.92)' : 'rgba(60,60,60,0.55)'),
+              color: isPinMode ? C.ink : '#fff',
               fontFamily: FONT_HAND, fontSize: '0.6875rem', fontWeight: count > 0 ? 700 : 400,
               padding: '2px 8px', borderRadius: 10,
               whiteSpace: 'nowrap', letterSpacing: 0.5
@@ -2099,7 +2121,6 @@ function AichiMapView({ posts }) {
           </div>
         );
       })}
-      {/* 件数ゼロの場合のメッセージ */}
       {posts && posts.length === 0 && (
         <div style={{ position: 'absolute', bottom: 16, left: '50%', transform: 'translateX(-50%)',
           background: 'rgba(255,255,255,0.9)', borderRadius: 8, padding: '6px 14px',
