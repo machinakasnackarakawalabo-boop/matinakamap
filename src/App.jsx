@@ -1994,44 +1994,49 @@ function JapanMapView({ pins, currentRegion, viewBox, getPinInfo, stores, isPinM
       )}
 
       {/* ピン（割合座標 → 仮想座標） */}
-      {Object.entries(pins).map(([key, count]) => {
-        if (key === 'overseas') return null;
-        const info = getPinInfo(key);
-        if (!info) return null;
-        const isCurrent = isAll || info.region === currentRegion;
-        // ズームに合わせてピンを縮小（地方表示時に巨大化しないよう）
-        const baseRadius = Math.min(8 + count * 3, 26);
-        const radius = Math.max(6, baseRadius * pinScale);
-        const fontSize = Math.max(8, 14 * pinScale);
-        const labelFontSize = Math.max(7, 13 * pinScale);
-        const color = info.isStore ? C.pink : REGION_COLOR(info.region);
-        const px = info.x * VW;
-        const py = info.y * VH;
-        const handleDragStart = isPinMode ? (e) => {
-          e.preventDefault();
-          const move = (ev) => onPinDrag(key, ev.clientX, ev.clientY);
-          const up = () => { window.removeEventListener('mousemove', move); window.removeEventListener('mouseup', up); };
-          window.addEventListener('mousemove', move);
-          window.addEventListener('mouseup', up);
-        } : undefined;
-        return (
-          <g key={key} filter="url(#shadow)" opacity={isCurrent ? 1 : 0.25}
-             style={{ cursor: isPinMode ? 'grab' : undefined }}
-             onMouseDown={handleDragStart}>
-            {isCurrent && !isPinMode && (
-              <circle cx={px} cy={py} r={radius + 6 * pinScale} fill="none" stroke={color} strokeWidth="2" opacity="0.7">
-                <animate attributeName="r" from={radius} to={radius + 24 * pinScale} dur="1.8s" repeatCount="indefinite"/>
-                <animate attributeName="opacity" from="0.8" to="0" dur="1.8s" repeatCount="indefinite"/>
-              </circle>
-            )}
-            <circle cx={px} cy={py} r={isPinMode ? radius + 4 * pinScale : radius} fill={isPinMode ? C.yellow : color} stroke={C.bgWhite} strokeWidth={isCurrent ? 3 : 2}/>
-            <text x={px} y={py + fontSize * 0.35} fontSize={fontSize} fontWeight="700" fill={isPinMode ? C.ink : '#fff'} textAnchor="middle" style={{ fontFamily: FONT_DISPLAY }}>{isPinMode ? '✥' : count}</text>
-            <text x={px} y={py - radius - 4 * pinScale} fontSize={labelFontSize} fill={isCurrent ? C.ink : C.inkLight} textAnchor="middle" fontWeight={isCurrent ? 700 : 500} style={{ fontFamily: FONT_HAND }}>
-              {info.isStore ? '🏠 ' : ''}{info.name}
-            </text>
-          </g>
-        );
-      })}
+      {(() => {
+        // ピン調整モード時は全都道府県を表示、通常は投稿あり分のみ
+        const pinEntries = isPinMode
+          ? Object.keys(PREFS).filter(k => k !== 'overseas').map(k => [k, pins[k] || 0])
+          : Object.entries(pins).filter(([k]) => k !== 'overseas');
+        return pinEntries.map(([key, count]) => {
+          const info = getPinInfo(key);
+          if (!info) return null;
+          const isCurrent = isAll || info.region === currentRegion;
+          if (!isPinMode && !isCurrent) return null;
+          const baseRadius = Math.min(8 + count * 3, 26);
+          const radius = Math.max(6, baseRadius * pinScale);
+          const fontSize = Math.max(8, 14 * pinScale);
+          const labelFontSize = Math.max(7, 13 * pinScale);
+          const color = info.isStore ? C.pink : REGION_COLOR(info.region);
+          const px = info.x * VW;
+          const py = info.y * VH;
+          const handleDragStart = isPinMode ? (e) => {
+            e.preventDefault();
+            const move = (ev) => onPinDrag(key, ev.clientX, ev.clientY);
+            const up = () => { window.removeEventListener('mousemove', move); window.removeEventListener('mouseup', up); };
+            window.addEventListener('mousemove', move);
+            window.addEventListener('mouseup', up);
+          } : undefined;
+          return (
+            <g key={key} filter="url(#shadow)" opacity={isCurrent ? 1 : 0.25}
+               style={{ cursor: isPinMode ? 'grab' : undefined }}
+               onMouseDown={handleDragStart}>
+              {isCurrent && !isPinMode && (
+                <circle cx={px} cy={py} r={radius + 6 * pinScale} fill="none" stroke={color} strokeWidth="2" opacity="0.7">
+                  <animate attributeName="r" from={radius} to={radius + 24 * pinScale} dur="1.8s" repeatCount="indefinite"/>
+                  <animate attributeName="opacity" from="0.8" to="0" dur="1.8s" repeatCount="indefinite"/>
+                </circle>
+              )}
+              <circle cx={px} cy={py} r={isPinMode ? radius + 4 * pinScale : radius} fill={isPinMode ? C.yellow : color} stroke={C.bgWhite} strokeWidth={isCurrent ? 3 : 2}/>
+              <text x={px} y={py + fontSize * 0.35} fontSize={fontSize} fontWeight="700" fill={isPinMode ? C.ink : '#fff'} textAnchor="middle" style={{ fontFamily: FONT_DISPLAY }}>{isPinMode ? '✥' : count}</text>
+              <text x={px} y={py - radius - 4 * pinScale} fontSize={labelFontSize} fill={isCurrent ? C.ink : C.inkLight} textAnchor="middle" fontWeight={isCurrent ? 700 : 500} style={{ fontFamily: FONT_HAND }}>
+                {info.isStore ? '🏠 ' : ''}{info.name}
+              </text>
+            </g>
+          );
+        });
+      })()}
     </svg>
   );
 }
