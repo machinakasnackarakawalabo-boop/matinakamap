@@ -81,7 +81,7 @@ const REGION_GROUPS = ['北海道', '東北', '関東', '中部', '近畿', '中
 const AICHI_SUBREGIONS = ['名古屋', '尾張東部', '尾張西部', '知多', '西三河', '東三河'];
 
 // 荒川区サブ地域
-const ARAKAWA_SUBREGIONS = ['町屋', '荒川', '南千住', '日暮里', '東尾久', '西尾久'];
+const ARAKAWA_SUBREGIONS = ['町屋', '荒川', '南千住', '西日暮里', '東日暮里', '東尾久', '西尾久'];
 
 const DEFAULT_STORES = {
   arakawa: { id: 'arakawa', name: '荒川区', fullName: 'ARAKAWA LABO 本店', parentPref: 'tokyo', x: 0.644, y: 0.581, description: 'ARAKAWA LABO 本店' },
@@ -2115,12 +2115,13 @@ function AichiMapView({ posts }) {
 // 荒川区マップ表示
 // =====================================
 const ARAKAWA_PIN_POS = {
-  '西尾久':  { x: 0.20, y: 0.38 },
-  '東尾久':  { x: 0.43, y: 0.33 },
-  '荒川':    { x: 0.57, y: 0.52 },
-  '町屋':    { x: 0.30, y: 0.63 },
-  '日暮里':  { x: 0.17, y: 0.74 },
-  '南千住':  { x: 0.74, y: 0.65 },
+  '西尾久':   { x: 0.20, y: 0.38 },
+  '東尾久':   { x: 0.43, y: 0.33 },
+  '荒川':     { x: 0.57, y: 0.52 },
+  '町屋':     { x: 0.30, y: 0.63 },
+  '西日暮里': { x: 0.14, y: 0.72 },
+  '東日暮里': { x: 0.25, y: 0.82 },
+  '南千住':   { x: 0.74, y: 0.65 },
 };
 
 function ArakawaMapView({ posts, isPinMode, onPinDrag, containerRef, pinOverrides }) {
