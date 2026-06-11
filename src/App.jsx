@@ -1496,6 +1496,8 @@ function MapView({ posts, addPost, updatePost, stores, tags, settings, updateSet
   const [detailPost, setDetailPost] = useState(null);  // 投稿詳細モーダル
   const [mapWidthPct, setMapWidthPct] = useState(50);  // マップ幅（%）
   const [isPinMode, setIsPinMode] = useState(false);   // ピン調整モード
+  const [panelPos, setPanelPos] = useState({ x: 16, y: null });  // 一括オフセットパネル位置
+  const panelDragOffset = useRef(null);
   const isDragging = useRef(false);
   const dragStartX = useRef(0);
   const dragStartPct = useRef(50);
@@ -1768,8 +1770,25 @@ function MapView({ posts, addPost, updatePost, stores, tags, settings, updateSet
 
           {/* ピン調整モード：一括オフセットUI */}
           {isPinMode && currentRegion !== '愛知' && currentRegion !== '荒川区' && (
-            <div style={{ position: 'absolute', bottom: 16, left: 16, zIndex: 20, background: 'rgba(255,255,255,0.95)', borderRadius: 10, padding: '10px 12px', boxShadow: '0 4px 16px rgba(0,0,0,0.15)', display: 'flex', flexDirection: 'column', gap: 6 }}>
-              <div style={{ fontFamily: FONT_HAND, fontSize: '0.6875rem', color: C.inkSub, marginBottom: 2, fontWeight: 700 }}>全ピン一括移動</div>
+            <div style={{ position: 'absolute', ...(panelPos.y !== null ? { top: panelPos.y, left: panelPos.x } : { bottom: 16, left: panelPos.x }), zIndex: 20, background: 'rgba(255,255,255,0.95)', borderRadius: 10, padding: '10px 12px', boxShadow: '0 4px 16px rgba(0,0,0,0.15)', display: 'flex', flexDirection: 'column', gap: 6 }}>
+              <div
+                onMouseDown={(e) => {
+                  e.preventDefault();
+                  const el = e.currentTarget.parentElement;
+                  const rect = el.getBoundingClientRect();
+                  const container = el.parentElement.getBoundingClientRect();
+                  panelDragOffset.current = { dx: e.clientX - rect.left, dy: e.clientY - rect.top, containerTop: container.top, containerLeft: container.left };
+                  const move = (ev) => {
+                    const { dx, dy, containerTop, containerLeft } = panelDragOffset.current;
+                    setPanelPos({ x: ev.clientX - containerLeft - dx, y: ev.clientY - containerTop - dy });
+                  };
+                  const up = () => { window.removeEventListener('mousemove', move); window.removeEventListener('mouseup', up); };
+                  window.addEventListener('mousemove', move);
+                  window.addEventListener('mouseup', up);
+                }}
+                style={{ fontFamily: FONT_HAND, fontSize: '0.6875rem', color: C.inkSub, marginBottom: 2, fontWeight: 700, cursor: 'grab', userSelect: 'none' }}>
+                ☰ 全ピン一括移動
+              </div>
               <div style={{ display: 'flex', gap: 4, justifyContent: 'center' }}>
                 <button onClick={() => shiftAllPins(0, -0.01)} style={s.rowBtn}>↑</button>
               </div>
