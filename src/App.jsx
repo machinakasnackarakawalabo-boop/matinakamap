@@ -5158,7 +5158,7 @@ export default function App() {
   const tabs = [];
   if (settings.showMap) tabs.push({ key: 'map', icon: '🗾', label: 'マップ' });
   if (settings.showBoard) tabs.push({ key: 'board', icon: '📋', label: '掲示板' });
-  if (isAdmin && adminLoggedIn && settings.showQR) tabs.push({ key: 'qr', icon: '📱', label: 'QR' });
+  if (settings.showQR) tabs.push({ key: 'qr', icon: '📱', label: 'QR' });
   if (isAdmin) tabs.push({ key: 'admin', icon: '⚙️', label: adminLoggedIn ? '管理' : '🔐 管理' });
 
   useEffect(() => {
@@ -5166,7 +5166,7 @@ export default function App() {
       setView(tabs[0]?.key || 'map');
     }
     // eslint-disable-next-line
-  }, [view, isAdmin, adminLoggedIn, settings.showQR, settings.showMap, settings.showBoard]);
+  }, [view, isAdmin, adminLoggedIn, settings.showMap, settings.showBoard, settings.showQR]);
 
   // 文字サイズ：管理画面のみ適用。スマホ（customer）はブラウザデフォルトのまま
   useEffect(() => {
@@ -5231,7 +5231,7 @@ export default function App() {
           settings={settings}
         />
       )}
-      {view === 'qr' && isAdmin && adminLoggedIn && <QRScreen/>}
+      {view === 'qr' && <QRScreen/>}
       {view === 'admin' && isAdmin && adminLoggedIn && (
         <AdminScreen
           posts={posts}
