@@ -5199,6 +5199,8 @@ export default function App() {
   const [isCustomer, setIsCustomer] = useState(false);
   const [isAdmin, setIsAdmin] = useState(false);
   const [adminLoggedIn, setAdminLoggedIn] = useState(false);
+  const [tabPos, setTabPos] = useState(null); // null = デフォルト位置（右上固定）
+  const tabDragOffset = useRef(null);
   const { posts, addPost, removePost, removeAllPosts, updatePost } = usePosts();
   const { stores, saveStore, deleteStore } = useStores();
   const { settings, updateSettings } = useSettings();
@@ -5225,6 +5227,20 @@ export default function App() {
       }
     }
   }, []);
+
+  const switcherStyle = tabPos
+    ? { ...s.switcher, top: tabPos.y, left: tabPos.x, right: 'auto', bottom: 'auto' }
+    : s.switcher;
+
+  const handleTabDragStart = (e) => {
+    e.preventDefault();
+    const rect = e.currentTarget.parentElement.getBoundingClientRect();
+    tabDragOffset.current = { dx: e.clientX - rect.left, dy: e.clientY - rect.top };
+    const move = (ev) => setTabPos({ x: ev.clientX - tabDragOffset.current.dx, y: ev.clientY - tabDragOffset.current.dy });
+    const up = () => { window.removeEventListener('mousemove', move); window.removeEventListener('mouseup', up); };
+    window.addEventListener('mousemove', move);
+    window.addEventListener('mouseup', up);
+  };
 
   // タブ構成
   const tabs = [];
@@ -5260,7 +5276,8 @@ export default function App() {
   if (view === 'admin' && isAdmin && !adminLoggedIn) {
     return (
       <div style={{ minHeight: '100vh', fontFamily: FONT_BODY, background: C.bgWhite, color: C.ink }}>
-        <div style={s.switcher}>
+        <div style={switcherStyle}>
+          <span onMouseDown={handleTabDragStart} style={{ cursor: 'grab', padding: '0 4px', color: C.inkSub, fontSize: '0.75rem', userSelect: 'none' }}>⠿</span>
           {tabs.map(t => (
             <button key={t.key} onClick={() => setView(t.key)} style={{ ...s.switcherBtn, ...(view === t.key ? s.switcherBtnActive : {}) }}>
               <span>{t.icon}</span>
@@ -5276,7 +5293,8 @@ export default function App() {
 
   return (
     <div style={{ minHeight: '100vh', fontFamily: FONT_BODY, background: C.bgWhite, color: C.ink }}>
-      <div style={s.switcher}>
+      <div style={switcherStyle}>
+        <span onMouseDown={handleTabDragStart} style={{ cursor: 'grab', padding: '0 4px', color: C.inkSub, fontSize: '0.75rem', userSelect: 'none' }}>⠿</span>
         {tabs.map(t => (
           <button key={t.key} onClick={() => setView(t.key)} style={{ ...s.switcherBtn, ...(view === t.key ? s.switcherBtnActive : {}) }}>
             <span>{t.icon}</span>
