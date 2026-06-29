@@ -1984,23 +1984,6 @@ function JapanMapView({ pins, currentRegion, viewBox, getPinInfo, stores, isPinM
         opacity={isStore ? 0.45 : (isPinMode ? 0.7 : 0.2)}
       />
 
-      {/* 地方ズーム時：投稿ない県は名前を薄く表示 */}
-      {isRegion && prefsInRegion.map(([key, pref]) => {
-        const hasPin = pins[key] > 0;
-        if (hasPin) return null;
-        return (
-          <text
-            key={`label_${key}`}
-            x={pref.x * VW} y={pref.y * VH + 3}
-            fontSize={Math.max(7, 11 * pinScale)} fill={C.inkLight}
-            textAnchor="middle"
-            style={{ fontFamily: FONT_HAND, fontWeight: 500 }}
-            opacity="0.7"
-          >
-            {pref.name.replace(/[県府都道]$/, '')}
-          </text>
-        );
-      })}
 
       {/* 海外マーカー（全国表示時） */}
       {isAll && pins['overseas'] && (
