@@ -83,6 +83,9 @@ const AICHI_SUBREGIONS = ['名古屋', '尾張東部', '尾張西部', '知多',
 // 荒川区サブ地域
 const ARAKAWA_SUBREGIONS = ['町屋', '荒川', '南千住', '西日暮里', '東日暮里', '東尾久', '西尾久'];
 
+// 東京23区
+const TOKYO_WARDS = ['千代田区', '中央区', '港区', '新宿区', '文京区', '台東区', '墨田区', '江東区', '品川区', '目黒区', '大田区', '世田谷区', '渋谷区', '中野区', '杉並区', '豊島区', '北区', '荒川区', '板橋区', '練馬区', '足立区', '葛飾区', '江戸川区'];
+
 const DEFAULT_STORES = {
   arakawa: { id: 'arakawa', name: '荒川区', fullName: 'ARAKAWA LABO 本店', parentPref: 'tokyo', x: 0.644, y: 0.581, description: 'ARAKAWA LABO 本店' },
   iwanuma: { id: 'iwanuma', name: '岩沼市', fullName: '駅中スナック 岩沼店', parentPref: 'miyagi', x: 0.696, y: 0.438, description: '駅中スナック 岩沼店' },
@@ -1040,6 +1043,7 @@ function PostForm({ onSubmit, onCancel, stores, tags: availableTags }) {
   const [country, setCountry] = useState('');           // 海外の場合の国名
   const [aichiSubRegion, setAichiSubRegion] = useState('');   // 愛知サブ地域
   const [arakawaSubRegion, setArakawaSubRegion] = useState(''); // 荒川区サブ地域
+  const [tokyoWard, setTokyoWard] = useState('');              // 東京23区
   const [url, setUrl] = useState('');                   // おすすめ場所のURL（任意）
   const [submitting, setSubmitting] = useState(false);
   const [success, setSuccess] = useState(null);
@@ -1054,7 +1058,7 @@ function PostForm({ onSubmit, onCancel, stores, tags: availableTags }) {
     if (savedGender) setGender(savedGender);
   }, []);
 
-  useEffect(() => { setStoreId(''); setAichiSubRegion(''); setArakawaSubRegion(''); }, [prefecture]);
+  useEffect(() => { setStoreId(''); setAichiSubRegion(''); setArakawaSubRegion(''); setTokyoWard(''); }, [prefecture]);
 
   const availableStores = useMemo(
     () => Object.values(stores).filter(s => s.parentPref === prefecture),
@@ -1186,6 +1190,7 @@ function PostForm({ onSubmit, onCancel, stores, tags: availableTags }) {
       url: url.trim() || null,
       aichiSubRegion: prefecture === 'aichi' && aichiSubRegion ? aichiSubRegion : null,
       arakawaSubRegion: storeId === 'arakawa' && arakawaSubRegion ? arakawaSubRegion : null,
+      tokyoWard: prefecture === 'tokyo' && tokyoWard ? tokyoWard : null,
       likes: [],
       comments: [],
       timestamp: Date.now()
@@ -1289,7 +1294,38 @@ function PostForm({ onSubmit, onCancel, stores, tags: availableTags }) {
           </div>
         )}
 
-        {availableStores.length > 0 && (
+        {/* 東京：23区選択 */}
+        {prefecture === 'tokyo' && (
+          <div style={s.field}>
+            <label style={s.label}>
+              <span style={{ ...s.labelDot, background: C.pink }} />区
+              <span style={s.optional}>任意</span>
+            </label>
+            <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap' }}>
+              {TOKYO_WARDS.map(ward => (
+                <button key={ward} type="button"
+                  onClick={() => {
+                    const next = tokyoWard === ward ? '' : ward;
+                    setTokyoWard(next);
+                    setStoreId(next === '荒川区' ? 'arakawa' : '');
+                    if (next !== '荒川区') setArakawaSubRegion('');
+                  }}
+                  style={{
+                    padding: '7px 13px', borderRadius: 20,
+                    border: `1.5px solid ${tokyoWard === ward ? C.pink : C.line}`,
+                    background: tokyoWard === ward ? C.pinkLight : C.bgOff,
+                    color: tokyoWard === ward ? C.pink : C.inkSub,
+                    fontFamily: FONT_HAND, fontSize: '0.8125rem', cursor: 'pointer'
+                  }}>
+                  {ward}
+                </button>
+              ))}
+            </div>
+          </div>
+        )}
+
+        {/* 東京以外の店舗選択 */}
+        {prefecture !== 'tokyo' && availableStores.length > 0 && (
           <div style={s.field}>
             <label style={s.label}>
               <span style={{ ...s.labelDot, background: C.pink }} />街中スナック店舗
@@ -1310,7 +1346,7 @@ function PostForm({ onSubmit, onCancel, stores, tags: availableTags }) {
           </div>
         )}
 
-        {/* 荒川区店舗選択時：サブ地域選択 */}
+        {/* 荒川区サブ地域選択 */}
         {storeId === 'arakawa' && (
           <div style={s.field}>
             <label style={s.label}>
