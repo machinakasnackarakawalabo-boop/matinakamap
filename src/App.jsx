@@ -1951,14 +1951,13 @@ function MapView({ posts, addPost, updatePost, stores, tags, settings, updateSet
 
       <AccentLine style={{ marginTop: 16 }} />
 
-      <div style={{ textAlign: 'center', fontFamily: FONT_HAND, fontSize: '0.8125rem', color: C.inkSub, padding: '6px 0', letterSpacing: 1 }}>
-        タブレットでも見れますのでお声がけください～
-      </div>
-
       <footer style={s.monitorFooter}>
         <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
           <span style={s.liveDot}/>
           <span>LIVE 自動更新</span>
+        </div>
+        <div style={{ fontFamily: FONT_HAND, fontSize: '0.8125rem', color: C.inkSub, letterSpacing: 1 }}>
+          タブレットでも見れますのでお声がけください～
         </div>
         <div style={{ fontFamily: FONT_HAND, color: C.green, letterSpacing: 2 }}>
           QRを読み込んで地図に貼ろう
