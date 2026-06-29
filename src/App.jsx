@@ -1294,33 +1294,28 @@ function PostForm({ onSubmit, onCancel, stores, tags: availableTags }) {
           </div>
         )}
 
-        {/* 東京：23区選択 */}
+        {/* 東京：23区選択（プルダウン） */}
         {prefecture === 'tokyo' && (
           <div style={s.field}>
             <label style={s.label}>
               <span style={{ ...s.labelDot, background: C.pink }} />区
               <span style={s.optional}>任意</span>
             </label>
-            <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap' }}>
+            <select
+              value={tokyoWard}
+              onChange={e => {
+                const next = e.target.value;
+                setTokyoWard(next);
+                setStoreId(next === '荒川区' ? 'arakawa' : '');
+                if (next !== '荒川区') setArakawaSubRegion('');
+              }}
+              style={{ ...s.input, fontFamily: FONT_HAND }}
+            >
+              <option value=''>選択しない</option>
               {TOKYO_WARDS.map(ward => (
-                <button key={ward} type="button"
-                  onClick={() => {
-                    const next = tokyoWard === ward ? '' : ward;
-                    setTokyoWard(next);
-                    setStoreId(next === '荒川区' ? 'arakawa' : '');
-                    if (next !== '荒川区') setArakawaSubRegion('');
-                  }}
-                  style={{
-                    padding: '7px 13px', borderRadius: 20,
-                    border: `1.5px solid ${tokyoWard === ward ? C.pink : C.line}`,
-                    background: tokyoWard === ward ? C.pinkLight : C.bgOff,
-                    color: tokyoWard === ward ? C.pink : C.inkSub,
-                    fontFamily: FONT_HAND, fontSize: '0.8125rem', cursor: 'pointer'
-                  }}>
-                  {ward}
-                </button>
+                <option key={ward} value={ward}>{ward}</option>
               ))}
-            </div>
+            </select>
           </div>
         )}
 
