@@ -2773,17 +2773,13 @@ function ScrollingList({ posts, regionColor, onPostClick, tagMap, noAutoScroll =
     content.style.transform = `translateY(-${offsetRef.current}px)`;
   };
 
-  // タッチ操作
+  // タッチ操作（慣性スクロール付き）
   const touchYRef = useRef(0);
-  const handleTouchStart = (e) => {
-    touchYRef.current = e.touches[0].clientY;
-    lastUserActionRef.current = Date.now();
-  };
-  const handleTouchMove = (e) => {
-    const y = e.touches[0].clientY;
-    const dy = touchYRef.current - y;
-    touchYRef.current = y;
-    lastUserActionRef.current = Date.now();
+  const touchTimeRef = useRef(0);
+  const velocityRef = useRef(0);
+  const momentumRafRef = useRef(null);
+
+  const applyOffset = (dy) => {
     const content = contentRef.current;
     if (!content) return;
     const oneSet = content.scrollHeight / repeats;
@@ -2794,11 +2790,40 @@ function ScrollingList({ posts, regionColor, onPostClick, tagMap, noAutoScroll =
     content.style.transform = `translateY(-${offsetRef.current}px)`;
   };
 
+  const handleTouchStart = (e) => {
+    touchYRef.current = e.touches[0].clientY;
+    touchTimeRef.current = Date.now();
+    velocityRef.current = 0;
+    lastUserActionRef.current = Date.now();
+    if (momentumRafRef.current) cancelAnimationFrame(momentumRafRef.current);
+  };
+  const handleTouchMove = (e) => {
+    const now = Date.now();
+    const y = e.touches[0].clientY;
+    const dy = touchYRef.current - y;
+    const dt = now - touchTimeRef.current || 1;
+    velocityRef.current = (dy / dt) * 16;
+    touchYRef.current = y;
+    touchTimeRef.current = now;
+    lastUserActionRef.current = now;
+    applyOffset(dy);
+  };
+  const handleTouchEnd = () => {
+    const momentum = () => {
+      if (Math.abs(velocityRef.current) < 0.3) return;
+      velocityRef.current *= 0.93;
+      applyOffset(velocityRef.current);
+      momentumRafRef.current = requestAnimationFrame(momentum);
+    };
+    momentumRafRef.current = requestAnimationFrame(momentum);
+  };
+
   return (
     <div
       onWheel={handleWheel}
       onTouchStart={handleTouchStart}
       onTouchMove={handleTouchMove}
+      onTouchEnd={handleTouchEnd}
       onMouseEnter={() => setHovering(true)}
       onMouseLeave={() => setHovering(false)}
       style={{
