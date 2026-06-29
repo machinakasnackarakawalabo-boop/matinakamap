@@ -2023,8 +2023,7 @@ function JapanMapView({ pins, currentRegion, viewBox, getPinInfo, stores, isPinM
           if (!info) return null;
           const isCurrent = isAll || info.region === currentRegion;
           if (!isPinMode && !isCurrent) return null;
-          const baseRadius = Math.min(8 + count * 3, 26);
-          const radius = Math.max(6, baseRadius * pinScale);
+          const radius = Math.max(6, 10 * pinScale);
           const fontSize = Math.max(8, 14 * pinScale);
           const labelFontSize = Math.max(7, 13 * pinScale);
           const color = info.isStore ? C.pink : REGION_COLOR(info.region);
