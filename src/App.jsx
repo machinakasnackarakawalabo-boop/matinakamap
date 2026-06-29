@@ -3013,17 +3013,16 @@ function ScrollingList({ posts, regionColor, onPostClick, tagMap, noAutoScroll =
                   color: pen,
                   cursor: onPostClick ? 'pointer' : 'default'
                 }}>
-                <div style={{ display: 'flex', justifyContent: 'flex-end', marginBottom: 8 }}>
-                  <span style={{ fontSize: '0.8125rem', fontWeight: 600, fontStyle: 'italic', opacity: 0.7 }}>— {post.penname}</span>
-                </div>
-
-                <div style={{ display: 'flex', gap: 6, marginBottom: 8, flexWrap: 'wrap' }}>
-                  <span style={{ ...s.miniTag, background: regionColor }}>
-                    {post.storeName ? `🏠 ${post.storeName}` : post.prefectureName}
-                  </span>
-                  {post.detail?.name && (
-                    <span style={s.miniDetailTag}>📍 {post.detail.name}</span>
-                  )}
+                <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 8, gap: 6 }}>
+                  <div style={{ display: 'flex', gap: 6, flexWrap: 'wrap' }}>
+                    <span style={{ ...s.miniTag, background: regionColor }}>
+                      {post.storeName ? `🏠 ${post.storeName}` : post.prefectureName}
+                    </span>
+                    {post.detail?.name && (
+                      <span style={s.miniDetailTag}>📍 {post.detail.name}</span>
+                    )}
+                  </div>
+                  <span style={{ fontSize: '0.8125rem', fontWeight: 600, fontStyle: 'italic', color: C.ink, whiteSpace: 'nowrap' }}>— {post.penname}</span>
                 </div>
 
                 {/* タグ */}
