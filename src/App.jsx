@@ -2048,7 +2048,7 @@ function JapanMapView({ pins, currentRegion, viewBox, getPinInfo, stores, isPinM
                 </circle>
               )}
               <circle cx={px} cy={py} r={isPinMode ? radius + 4 * pinScale : radius} fill={isPinMode ? C.yellow : color} stroke={C.bgWhite} strokeWidth={isCurrent ? 3 : 2}/>
-              <text x={px} y={py + fontSize * 0.35} fontSize={fontSize} fontWeight="700" fill={isPinMode ? C.ink : '#fff'} textAnchor="middle" style={{ fontFamily: FONT_DISPLAY }}>{isPinMode ? '✥' : count}</text>
+              {isPinMode && <text x={px} y={py + fontSize * 0.35} fontSize={fontSize} fontWeight="700" fill={C.ink} textAnchor="middle" style={{ fontFamily: FONT_DISPLAY }}>✥</text>}
               <text x={px} y={py - radius - 4 * pinScale} fontSize={labelFontSize} fill={isCurrent ? C.ink : C.inkLight} textAnchor="middle" fontWeight={isCurrent ? 700 : 500} style={{ fontFamily: FONT_HAND }}>
                 {info.isStore ? '🏠 ' : ''}{info.name}
               </text>
