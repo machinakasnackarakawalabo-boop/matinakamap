@@ -303,12 +303,16 @@ function AccentLine({ height = 3, style = {} }) {
 // データフック（シンプル版・無限ループ回避）
 // =====================================
 function usePosts() {
+  const postsMapRef = useRef({});
+
   const [posts, setPosts] = useState(() => {
     const map = safeLoad(KEYS.posts) || {};
+    postsMapRef.current = map;
     return Object.values(map).sort((a, b) => b.timestamp - a.timestamp);
   });
 
   const setFromMap = (map) => {
+    postsMapRef.current = map;
     safeSave(KEYS.posts, map);
     setPosts(Object.values(map).sort((a, b) => b.timestamp - a.timestamp));
   };
@@ -318,10 +322,10 @@ function usePosts() {
     if (!supabase) return;
     let mounted = true;
 
-    // 全件取得してlocalStorageとマージ
+    // 全件取得してマージ
     supabase.from('posts').select('data').then(({ data, error }) => {
       if (!mounted || error || !data) return;
-      const map = safeLoad(KEYS.posts) || {};
+      const map = { ...postsMapRef.current };
       data.forEach(row => { if (row.data?.id) map[row.data.id] = row.data; });
       if (mounted) setFromMap(map);
     });
@@ -330,19 +334,19 @@ function usePosts() {
     const channel = supabase.channel('posts-realtime')
       .on('postgres_changes', { event: 'INSERT', schema: 'public', table: 'posts' }, ({ new: row }) => {
         if (!mounted || !row?.data?.id) return;
-        const map = safeLoad(KEYS.posts) || {};
+        const map = { ...postsMapRef.current };
         map[row.data.id] = row.data;
         setFromMap(map);
       })
       .on('postgres_changes', { event: 'UPDATE', schema: 'public', table: 'posts' }, ({ new: row }) => {
         if (!mounted || !row?.data?.id) return;
-        const map = safeLoad(KEYS.posts) || {};
+        const map = { ...postsMapRef.current };
         map[row.data.id] = row.data;
         setFromMap(map);
       })
       .on('postgres_changes', { event: 'DELETE', schema: 'public', table: 'posts' }, ({ old: row }) => {
         if (!mounted || !row?.id) return;
-        const map = safeLoad(KEYS.posts) || {};
+        const map = { ...postsMapRef.current };
         delete map[row.id];
         setFromMap(map);
       })
@@ -357,28 +361,28 @@ function usePosts() {
   const sb = async (fn) => { try { const { error } = await fn(); if (error) console.error('Supabase:', error); } catch(e) { console.error('Supabase:', e); } };
 
   const addPost = useCallback((post) => {
-    const map = safeLoad(KEYS.posts) || {};
+    const map = { ...postsMapRef.current };
     map[post.id] = post;
     setFromMap(map);
     if (supabase) sb(() => supabase.from('posts').upsert({ id: post.id, data: post }));
   }, []);
 
   const removePost = useCallback((id) => {
-    const map = safeLoad(KEYS.posts) || {};
+    const map = { ...postsMapRef.current };
     delete map[id];
     setFromMap(map);
     if (supabase) sb(() => supabase.from('posts').delete().eq('id', id));
   }, []);
 
   const removeAllPosts = useCallback(() => {
-    const ids = Object.keys(safeLoad(KEYS.posts) || {});
+    const ids = Object.keys(postsMapRef.current);
     setFromMap({});
     if (supabase && ids.length > 0) sb(() => supabase.from('posts').delete().in('id', ids));
   }, []);
 
   const updatePost = useCallback(async (id, updater) => {
-    const map = safeLoad(KEYS.posts) || {};
-    if (!map[id]) return;
+    const map = { ...postsMapRef.current };
+    if (!map[id]) return new Error(`投稿が見つかりません: ${id}`);
     const updated = { ...updater(map[id]) };
     map[id] = updated;
     setFromMap(map);
