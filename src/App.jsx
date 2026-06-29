@@ -1620,6 +1620,10 @@ function MapView({ posts, addPost, updatePost, stores, tags, settings, updateSet
     if (settings.showAichiTab && posts.some(p => p.prefecture === 'aichi')) {
       result.push('愛知');
     }
+    // 東京23区タブ（東京投稿がある場合）
+    if (posts.some(p => p.prefecture === 'tokyo')) {
+      result.push('東京23区');
+    }
     REGION_GROUPS.forEach(r => { if (set.has(r)) result.push(r); });
     if (set.has('海外')) result.push('海外');
     return result;
@@ -1681,6 +1685,8 @@ function MapView({ posts, addPost, updatePost, stores, tags, settings, updateSet
       list = posts;
     } else if (currentRegion === '愛知') {
       list = posts.filter(p => p.prefecture === 'aichi');
+    } else if (currentRegion === '東京23区') {
+      list = posts.filter(p => p.prefecture === 'tokyo');
     } else {
       list = posts.filter(p => p.region === currentRegion);
     }
@@ -1787,6 +1793,10 @@ function MapView({ posts, addPost, updatePost, stores, tags, settings, updateSet
             <ArakawaMapView posts={visiblePosts}
               isPinMode={isPinMode} onPinDrag={handlePinDrag}
               containerRef={mapSvgRef} pinOverrides={settings?.pinOverrides}/>
+          ) : currentRegion === '東京23区' ? (
+            <TokyoMapView posts={visiblePosts}
+              isPinMode={isPinMode} onPinDrag={handlePinDrag}
+              containerRef={mapSvgRef} pinOverrides={settings?.pinOverrides}/>
           ) : (
             <JapanMapView
               pins={pins}
@@ -1801,7 +1811,7 @@ function MapView({ posts, addPost, updatePost, stores, tags, settings, updateSet
           )}
 
           {/* ピン調整モード：一括オフセットUI */}
-          {isPinMode && currentRegion !== '愛知' && currentRegion !== '荒川区' && (
+          {isPinMode && currentRegion !== '愛知' && currentRegion !== '荒川区' && currentRegion !== '東京23区' && (
             <div style={{ position: 'absolute', ...(panelPos.y !== null ? { top: panelPos.y, left: panelPos.x } : { bottom: 16, left: panelPos.x }), zIndex: 20, background: 'rgba(255,255,255,0.95)', borderRadius: 10, padding: '10px 12px', boxShadow: '0 4px 16px rgba(0,0,0,0.15)', display: 'flex', flexDirection: 'column', gap: 6 }}>
               <div
                 onMouseDown={(e) => {
@@ -2164,6 +2174,98 @@ function AichiMapView({ posts, isPinMode, onPinDrag, containerRef, pinOverrides 
           background: 'rgba(255,255,255,0.9)', borderRadius: 8, padding: '6px 14px',
           fontFamily: FONT_HAND, fontSize: '0.75rem', color: C.inkSub }}>
           愛知の投稿がまだありません
+        </div>
+      )}
+    </div>
+  );
+}
+
+// =====================================
+// 東京23区マップ表示
+// =====================================
+const TOKYO_WARD_PIN_POS = {
+  '千代田区': { x: 0.42, y: 0.46 },
+  '中央区':   { x: 0.52, y: 0.55 },
+  '港区':     { x: 0.40, y: 0.62 },
+  '新宿区':   { x: 0.32, y: 0.42 },
+  '文京区':   { x: 0.44, y: 0.37 },
+  '台東区':   { x: 0.56, y: 0.40 },
+  '墨田区':   { x: 0.65, y: 0.47 },
+  '江東区':   { x: 0.70, y: 0.58 },
+  '品川区':   { x: 0.43, y: 0.69 },
+  '目黒区':   { x: 0.33, y: 0.65 },
+  '大田区':   { x: 0.32, y: 0.80 },
+  '世田谷区': { x: 0.20, y: 0.68 },
+  '渋谷区':   { x: 0.30, y: 0.54 },
+  '中野区':   { x: 0.23, y: 0.44 },
+  '杉並区':   { x: 0.16, y: 0.52 },
+  '豊島区':   { x: 0.35, y: 0.32 },
+  '北区':     { x: 0.42, y: 0.24 },
+  '荒川区':   { x: 0.55, y: 0.30 },
+  '板橋区':   { x: 0.30, y: 0.20 },
+  '練馬区':   { x: 0.18, y: 0.30 },
+  '足立区':   { x: 0.62, y: 0.20 },
+  '葛飾区':   { x: 0.76, y: 0.32 },
+  '江戸川区': { x: 0.83, y: 0.50 },
+};
+
+function TokyoMapView({ posts, isPinMode, onPinDrag, containerRef, pinOverrides }) {
+  const subCounts = useMemo(() => {
+    const map = {};
+    (posts || []).forEach(p => {
+      if (p.tokyoWard) map[p.tokyoWard] = (map[p.tokyoWard] || 0) + 1;
+    });
+    return map;
+  }, [posts]);
+
+  return (
+    <div ref={containerRef} style={{ width: '100%', height: '100%', position: 'relative', background: '#f8f7f4', overflow: 'hidden', display: 'flex', alignItems: 'center', justifyContent: 'center', cursor: isPinMode ? 'crosshair' : undefined }}>
+      <img src="/23kumap.png" alt="東京23区マップ"
+        style={{ width: '100%', height: '100%', objectFit: 'contain', display: 'block', opacity: isPinMode ? 0.6 : 0.85 }}
+        onError={e => { e.target.style.display = 'none'; }}
+      />
+      {Object.entries(TOKYO_WARD_PIN_POS).map(([name, pos]) => {
+        const overrideKey = `tokyo23:${name}`;
+        const ov = pinOverrides?.[overrideKey];
+        const px = ov ? ov.x : pos.x;
+        const py = ov ? ov.y : pos.y;
+        const count = subCounts[name] || 0;
+
+        const handleMouseDown = isPinMode ? (e) => {
+          e.preventDefault();
+          const move = (ev) => onPinDrag?.(overrideKey, ev.clientX, ev.clientY);
+          const up = () => { window.removeEventListener('mousemove', move); window.removeEventListener('mouseup', up); };
+          window.addEventListener('mousemove', move);
+          window.addEventListener('mouseup', up);
+        } : undefined;
+
+        return (
+          <div key={name} onMouseDown={handleMouseDown} style={{
+            position: 'absolute',
+            left: `${px * 100}%`, top: `${py * 100}%`,
+            transform: 'translate(-50%, -50%)',
+            display: 'flex', flexDirection: 'column', alignItems: 'center', gap: 2,
+            pointerEvents: isPinMode ? 'auto' : 'none',
+            cursor: isPinMode ? 'grab' : undefined,
+            zIndex: isPinMode ? 10 : undefined
+          }}>
+            {isPinMode ? (
+              <div style={{ background: C.yellow, color: C.ink, fontFamily: FONT_DISPLAY, fontSize: '1rem', fontWeight: 700, width: 28, height: 28, borderRadius: '50%', display: 'flex', alignItems: 'center', justifyContent: 'center', boxShadow: '0 2px 8px rgba(0,0,0,0.25)', border: '2px solid #fff' }}>✥</div>
+            ) : count > 0 ? (
+              <div style={{ background: C.pink, color: '#fff', fontFamily: FONT_DISPLAY, fontSize: '0.75rem', fontWeight: 700, width: 28, height: 28, borderRadius: '50%', display: 'flex', alignItems: 'center', justifyContent: 'center', boxShadow: '0 2px 8px rgba(0,0,0,0.25)', border: '2px solid #fff' }}>♥</div>
+            ) : null}
+            <div style={{
+              background: isPinMode ? 'rgba(220,180,0,0.92)' : (count > 0 ? 'rgba(231,76,109,0.92)' : 'rgba(60,60,60,0.55)'),
+              color: isPinMode ? C.ink : '#fff',
+              fontFamily: FONT_HAND, fontSize: '0.5625rem', fontWeight: count > 0 ? 700 : 400,
+              padding: '1px 6px', borderRadius: 8, whiteSpace: 'nowrap'
+            }}>{name}</div>
+          </div>
+        );
+      })}
+      {posts && posts.filter(p => p.tokyoWard).length === 0 && (
+        <div style={{ position: 'absolute', bottom: 16, left: '50%', transform: 'translateX(-50%)', background: 'rgba(255,255,255,0.9)', borderRadius: 8, padding: '6px 14px', fontFamily: FONT_HAND, fontSize: '0.75rem', color: C.inkSub }}>
+          東京23区の投稿がまだありません
         </div>
       )}
     </div>
