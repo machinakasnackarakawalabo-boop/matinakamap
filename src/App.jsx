@@ -2279,11 +2279,6 @@ function TokyoMapView({ posts, isPinMode, onPinDrag, containerRef, pinOverrides 
           </div>
         );
       })}
-      {posts && posts.filter(p => p.tokyoWard).length === 0 && (
-        <div style={{ position: 'absolute', bottom: 16, left: '50%', transform: 'translateX(-50%)', background: 'rgba(255,255,255,0.9)', borderRadius: 8, padding: '6px 14px', fontFamily: FONT_HAND, fontSize: '0.75rem', color: C.inkSub }}>
-          東京23区の投稿がまだありません
-        </div>
-      )}
     </div>
   );
 }
