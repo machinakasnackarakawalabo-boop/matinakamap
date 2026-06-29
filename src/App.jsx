@@ -1338,9 +1338,9 @@ function PostForm({ onSubmit, onCancel, stores, tags: availableTags }) {
 
         <div style={s.field}>
           <label style={s.label}>
-            <span style={{ ...s.labelDot, background: C.pink }} />ひとこと
+            <span style={{ ...s.labelDot, background: C.pink }} />おすすめの場所
           </label>
-          <div style={s.hint}>具体的な地名やお店を書くと地図に矢印が出ます</div>
+          <div style={s.hint}>具体的な地名やお店、思い出を教えてください</div>
           <textarea value={message} onChange={(e) => setMessage(e.target.value)} placeholder="例：名古屋の味噌煮込みうどんが最高！山本屋本店がおすすめ" maxLength={140} rows={5} style={s.textarea}/>
           <div style={s.charCount}>{message.length} / 140</div>
         </div>
