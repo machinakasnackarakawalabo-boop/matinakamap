@@ -5381,7 +5381,7 @@ const FONT_LATIN = `'M PLUS Rounded 1c', sans-serif`;
 // =====================================
 const s = {
   switcher: {
-    position: 'fixed', top: 14, right: 14, zIndex: 1000,
+    position: 'fixed', bottom: 14, right: 14, zIndex: 1000,
     display: 'flex', gap: 2, padding: 4, alignItems: 'center',
     background: C.bgWhite, border: `1px solid ${C.line}`,
     borderRadius: 999, boxShadow: '0 4px 12px rgba(0,0,0,0.06)',
