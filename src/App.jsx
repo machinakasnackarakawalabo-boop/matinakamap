@@ -376,13 +376,25 @@ function usePosts() {
     if (supabase && ids.length > 0) sb(() => supabase.from('posts').delete().in('id', ids));
   }, []);
 
-  const updatePost = useCallback((id, updater) => {
+  const updatePost = useCallback(async (id, updater) => {
     const map = safeLoad(KEYS.posts) || {};
     if (!map[id]) return;
     const updated = { ...updater(map[id]) };
     map[id] = updated;
     setFromMap(map);
-    if (supabase) sb(() => supabase.from('posts').upsert({ id: updated.id, data: updated }));
+    if (supabase) {
+      try {
+        const { error } = await supabase.from('posts').upsert({ id: updated.id, data: updated });
+        if (error) {
+          console.error('Supabase updatePost:', error);
+          return error;
+        }
+      } catch(e) {
+        console.error('Supabase updatePost:', e);
+        return e;
+      }
+    }
+    return null;
   }, []);
 
   return { posts, addPost, removePost, removeAllPosts, updatePost };
@@ -3784,9 +3796,9 @@ function PostsTab({ posts, removePost, removeAllPosts, updatePost, stores }) {
     });
   };
 
-  const saveEdit = () => {
+  const saveEdit = async () => {
     if (!editingPost) return;
-    updatePost(editingPost, p => {
+    const err = await updatePost(editingPost, p => {
       const pref  = PREFS[editForm.prefecture];
       const store = editForm.storeId ? stores[editForm.storeId] : null;
       return {
@@ -3808,6 +3820,10 @@ function PostsTab({ posts, removePost, removeAllPosts, updatePost, stores }) {
         comments: editForm.comments || [],
       };
     });
+    if (err) {
+      alert(`保存に失敗しました。\n${err.message || err}\n\nSupabaseのRLS設定でUPDATEが許可されているか確認してください。`);
+      return;
+    }
     setEditingPost(null);
   };
 
