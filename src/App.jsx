@@ -2229,7 +2229,8 @@ function TokyoMapView({ posts, isPinMode, onPinDrag, containerRef, pinOverrides 
   const subCounts = useMemo(() => {
     const map = {};
     (posts || []).forEach(p => {
-      if (p.tokyoWard) map[p.tokyoWard] = (map[p.tokyoWard] || 0) + 1;
+      const ward = p.tokyoWard || (p.storeId === 'arakawa' ? '荒川区' : null);
+      if (ward) map[ward] = (map[ward] || 0) + 1;
     });
     return map;
   }, [posts]);
@@ -3791,6 +3792,7 @@ function PostsTab({ posts, removePost, removeAllPosts, updatePost, stores }) {
       timestamp:  post.timestamp  || Date.now(),
       url:           post.url           || '',
       arakawaSubRegion: post.arakawaSubRegion || '',
+      tokyoWard:     post.tokyoWard || (post.storeId === 'arakawa' ? '荒川区' : ''),
       comments:      post.comments ? post.comments.map(c => ({ ...c })) : [],
     });
   };
@@ -3816,6 +3818,7 @@ function PostsTab({ posts, removePost, removeAllPosts, updatePost, stores }) {
         timestamp:     editForm.timestamp,
         url:              editForm.url.trim() || null,
         arakawaSubRegion: editForm.arakawaSubRegion || null,
+        tokyoWard:     editForm.prefecture === 'tokyo' && editForm.tokyoWard ? editForm.tokyoWard : null,
         comments: editForm.comments || [],
       };
     });
@@ -3984,7 +3987,14 @@ function PostsTab({ posts, removePost, removeAllPosts, updatePost, stores }) {
                 </select>
               )}
 
-              {/* URLリンク */}
+              {/* 東京23区（東京都の投稿のみ） */}
+              {editForm.prefecture === 'tokyo' && fld('23区',
+                <select value={editForm.tokyoWard || ''} onChange={e => setEditForm(f => ({ ...f, tokyoWard: e.target.value }))} style={sel}>
+                  <option value="">— 選択してください —</option>
+                  {TOKYO_WARDS.map(w => <option key={w} value={w}>{w}</option>)}
+                </select>
+              )}
+
               {/* 荒川区サブ地域（荒川区店舗の投稿のみ） */}
               {editForm.storeId === 'arakawa' && fld('荒川区の地域',
                 <div style={{ display: 'flex', gap: 6, flexWrap: 'wrap' }}>
