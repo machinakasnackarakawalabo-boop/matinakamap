@@ -1192,6 +1192,7 @@ function PostForm({ onSubmit, onCancel, stores, tags: availableTags }) {
     };
     onSubmit(post);
     setSuccess({ pref, store });
+    window.scrollTo({ top: 0, behavior: 'smooth' });
     if (onCancel) setTimeout(() => onCancel(), 1800);
   };
 
