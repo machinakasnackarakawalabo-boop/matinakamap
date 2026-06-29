@@ -1909,7 +1909,7 @@ function MapView({ posts, addPost, updatePost, stores, tags, settings, updateSet
                 {currentRegion === '全国' ? 'ALL · 🌐' : currentRegion === '海外' ? 'OVERSEAS · 🌍' : Object.values(stores).some(st => st.name === currentRegion) ? 'HOME · 🏠' : 'NOW SHOWING'}
               </div>
               <div style={s.regionOverlayName}>
-                {currentRegion}{(['全国', '海外'].includes(currentRegion) || Object.values(stores).some(st => st.name === currentRegion)) ? '' : '地方'}
+                {currentRegion}{(['全国', '海外', '東京23区'].includes(currentRegion) || Object.values(stores).some(st => st.name === currentRegion)) ? '' : '地方'}
               </div>
               <div style={s.regionOverlayCount}>{visiblePosts.length} 件の投稿</div>
             </div>
