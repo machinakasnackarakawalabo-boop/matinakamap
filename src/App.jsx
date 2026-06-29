@@ -2742,13 +2742,8 @@ function PostDetailModal({ post, updatePost, tagMap, onClose }) {
   return (
     <div style={s.modalOverlay} onClick={onClose}>
       <div style={{ ...s.modal, maxWidth: 460 }} onClick={(e) => e.stopPropagation()}>
-        <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'baseline', marginBottom: 12, gap: 8 }}>
-          <span style={{ fontFamily: FONT_HAND, fontSize: '1.25rem', fontWeight: 700, color: C.ink, letterSpacing: 0.5 }}>{post.penname}</span>
-          {post.timestamp && (
-            <span style={{ fontSize: '0.6875rem', color: C.inkSub, fontFamily: FONT_LATIN, letterSpacing: 0.3, whiteSpace: 'nowrap' }}>
-              {new Date(post.timestamp).toLocaleString('ja-JP', { month: 'numeric', day: 'numeric', hour: '2-digit', minute: '2-digit' })}
-            </span>
-          )}
+        <div style={{ display: 'flex', justifyContent: 'flex-end', marginBottom: 12 }}>
+          <span style={{ fontFamily: FONT_HAND, fontSize: '0.75rem', color: C.inkSub, fontStyle: 'italic' }}>— {post.penname}</span>
         </div>
 
         <div style={{ display: 'flex', gap: 6, marginBottom: 12, flexWrap: 'wrap', alignItems: 'center' }}>
@@ -2800,11 +2795,16 @@ function PostDetailModal({ post, updatePost, tagMap, onClose }) {
           </a>
         )}
 
-        <div style={{ display: 'flex', gap: 6, marginBottom: 12, flexWrap: 'wrap' }}>
+        <div style={{ display: 'flex', gap: 6, marginBottom: 6, flexWrap: 'wrap' }}>
           {post.ageGroup && <span style={s.demographicTag}>{post.ageGroup}</span>}
           {post.gender && <span style={s.demographicTag}>{post.gender}</span>}
         </div>
 
+        {post.timestamp && (
+          <div style={{ fontFamily: FONT_LATIN, fontSize: '0.6875rem', color: C.inkSub, marginBottom: 14, letterSpacing: 0.5 }}>
+            {new Date(post.timestamp).toLocaleString('ja-JP', { month: 'numeric', day: 'numeric', hour: '2-digit', minute: '2-digit' })}
+          </div>
+        )}
 
         {/* いいね */}
         {liked ? (
@@ -3013,13 +3013,8 @@ function ScrollingList({ posts, regionColor, onPostClick, tagMap, noAutoScroll =
                   color: pen,
                   cursor: onPostClick ? 'pointer' : 'default'
                 }}>
-                <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'baseline', marginBottom: 8, gap: 6 }}>
-                  <span style={{ fontFamily: FONT_HAND, fontSize: '1.0625rem', fontWeight: 700, color: pen, letterSpacing: 0.5 }}>{post.penname}</span>
-                  {post.timestamp && (
-                    <span style={{ fontSize: '0.625rem', opacity: 0.5, fontFamily: FONT_LATIN, letterSpacing: 0.3, whiteSpace: 'nowrap' }}>
-                      {new Date(post.timestamp).toLocaleString('ja-JP', { month: 'numeric', day: 'numeric', hour: '2-digit', minute: '2-digit' })}
-                    </span>
-                  )}
+                <div style={{ display: 'flex', justifyContent: 'flex-end', marginBottom: 8 }}>
+                  <span style={{ fontSize: '0.8125rem', fontWeight: 600, fontStyle: 'italic', opacity: 0.7 }}>— {post.penname}</span>
                 </div>
 
                 <div style={{ display: 'flex', gap: 6, marginBottom: 8, flexWrap: 'wrap' }}>
@@ -3103,7 +3098,12 @@ function ScrollingList({ posts, regionColor, onPostClick, tagMap, noAutoScroll =
                   </div>
                 )}
 
-                <div style={{ display: 'flex', justifyContent: 'flex-end', alignItems: 'center', paddingTop: 8, marginTop: 8, borderTop: '1px dashed ' + pen + '30' }}>
+                <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', paddingTop: 8, marginTop: 8, borderTop: '1px dashed ' + pen + '30' }}>
+                  {post.timestamp ? (
+                    <span style={{ fontSize: '0.6875rem', opacity: 0.55, fontFamily: FONT_LATIN, letterSpacing: 0.5 }}>
+                      {new Date(post.timestamp).toLocaleString('ja-JP', { month: 'numeric', day: 'numeric', hour: '2-digit', minute: '2-digit' })}
+                    </span>
+                  ) : <span/>}
                   <span style={{ display: 'flex', gap: 8, fontSize: '0.8125rem', fontWeight: 600, opacity: 0.8 }}>
                     <span>❤️ {likeCount}</span>
                     <span>💬 {commentCount}</span>
