@@ -2814,8 +2814,8 @@ function PostDetailModal({ post, updatePost, tagMap, onClose }) {
             maxLength={20}
             style={{ ...s.input, flex: 1, fontSize: '0.875rem' }}
           />
-          <button onClick={handleLike} disabled={!trimmedLikeName}
-            style={{ ...s.likeBtn, width: 'auto', padding: '12px 20px', background: trimmedLikeName ? C.bgWhite : C.bgGray, borderColor: trimmedLikeName ? C.line : C.bgGray, color: trimmedLikeName ? C.inkSub : C.inkLight, border: '1.5px solid', borderRadius: 8, fontFamily: FONT_HAND, fontSize: '0.9375rem', fontWeight: 700, cursor: trimmedLikeName ? 'pointer' : 'default' }}>
+          <button onClick={trimmedLikeName ? handleLike : undefined} disabled={!trimmedLikeName}
+            style={{ ...s.likeBtn, width: 'auto', padding: '12px 20px', background: trimmedLikeName ? C.bgWhite : C.bgGray, borderColor: trimmedLikeName ? C.line : C.bgGray, color: trimmedLikeName ? C.inkSub : C.inkLight, border: '1.5px solid', borderRadius: 8, fontFamily: FONT_HAND, fontSize: '0.9375rem', fontWeight: 700, cursor: trimmedLikeName ? 'pointer' : 'default', pointerEvents: trimmedLikeName ? 'auto' : 'none' }}>
             🤍 いいね <strong>{likeCount}</strong>
           </button>
         </div>
@@ -3795,6 +3795,7 @@ function PostsTab({ posts, removePost, removeAllPosts, updatePost, stores }) {
       url:           post.url           || '',
       arakawaSubRegion: post.arakawaSubRegion || '',
       tokyoWard:     post.tokyoWard || (post.storeId === 'arakawa' ? '荒川区' : ''),
+      likes:         post.likes ? post.likes.map(l => ({ ...l })) : [],
       comments:      post.comments ? post.comments.map(c => ({ ...c })) : [],
     });
   };
@@ -3821,6 +3822,7 @@ function PostsTab({ posts, removePost, removeAllPosts, updatePost, stores }) {
         url:              editForm.url.trim() || null,
         arakawaSubRegion: editForm.arakawaSubRegion || null,
         tokyoWard:     editForm.prefecture === 'tokyo' && editForm.tokyoWard ? editForm.tokyoWard : null,
+        likes:    editForm.likes || [],
         comments: editForm.comments || [],
       };
     });
@@ -4014,6 +4016,29 @@ function PostsTab({ posts, removePost, removeAllPosts, updatePost, stores }) {
               {fld('URLリンク',
                 <input type="text" inputMode="url" value={editForm.url || ''} onChange={e => setEditForm(f => ({ ...f, url: e.target.value }))}
                   placeholder="https://" style={{ ...inp }}/>
+              )}
+
+              {fld(`❤️ いいね（${(editForm.likes || []).length}件）`,
+                <div style={{ display: 'flex', flexDirection: 'column', gap: 6 }}>
+                  {(editForm.likes || []).length === 0 && (
+                    <div style={{ fontSize: '0.75rem', color: C.inkLight, fontFamily: FONT_HAND }}>いいねなし</div>
+                  )}
+                  {(editForm.likes || []).map((l, i) => (
+                    <div key={i} style={{ display: 'flex', gap: 6, alignItems: 'center', background: C.bgOff, borderRadius: 6, padding: '5px 8px' }}>
+                      <span style={{ fontSize: '0.75rem', color: C.inkSub, marginRight: 2 }}>❤️</span>
+                      <input
+                        value={typeof l === 'object' ? (l.name || '') : l}
+                        onChange={e => setEditForm(f => ({ ...f, likes: f.likes.map((x, j) => j === i ? { ...(typeof x === 'object' ? x : { name: x }), name: e.target.value } : x) }))}
+                        placeholder="ペンネーム"
+                        style={{ ...inp, flex: 1, fontSize: '0.75rem', padding: '4px 8px' }}
+                      />
+                      <button onClick={() => setEditForm(f => ({ ...f, likes: f.likes.filter((_, j) => j !== i) }))}
+                        style={{ ...s.rowBtn, color: C.pink, borderColor: C.pink, padding: '3px 8px', fontSize: '0.75rem', flexShrink: 0 }}>
+                        削除
+                      </button>
+                    </div>
+                  ))}
+                </div>
               )}
 
               {fld(`💬 コメント（${(editForm.comments || []).length}件）`,
