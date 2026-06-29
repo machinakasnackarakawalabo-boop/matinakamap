@@ -3678,6 +3678,7 @@ function PostsTab({ posts, removePost, removeAllPosts, updatePost, stores }) {
       timestamp:  post.timestamp  || Date.now(),
       url:           post.url           || '',
       arakawaSubRegion: post.arakawaSubRegion || '',
+      comments:      post.comments ? post.comments.map(c => ({ ...c })) : [],
     });
   };
 
@@ -3702,6 +3703,7 @@ function PostsTab({ posts, removePost, removeAllPosts, updatePost, stores }) {
         timestamp:     editForm.timestamp,
         url:              editForm.url.trim() || null,
         arakawaSubRegion: editForm.arakawaSubRegion || null,
+        comments: editForm.comments || [],
       };
     });
     setEditingPost(null);
@@ -3883,6 +3885,36 @@ function PostsTab({ posts, removePost, removeAllPosts, updatePost, stores }) {
               {fld('URLリンク',
                 <input type="text" inputMode="url" value={editForm.url || ''} onChange={e => setEditForm(f => ({ ...f, url: e.target.value }))}
                   placeholder="https://" style={{ ...inp }}/>
+              )}
+
+              {fld(`💬 コメント（${(editForm.comments || []).length}件）`,
+                <div style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
+                  {(editForm.comments || []).length === 0 && (
+                    <div style={{ fontSize: '0.75rem', color: C.inkLight, fontFamily: FONT_HAND }}>コメントなし</div>
+                  )}
+                  {(editForm.comments || []).map((c, i) => (
+                    <div key={i} style={{ display: 'flex', gap: 6, alignItems: 'flex-start', background: C.bgOff, borderRadius: 6, padding: '6px 8px' }}>
+                      <div style={{ display: 'flex', flexDirection: 'column', gap: 4, flex: 1 }}>
+                        <input
+                          value={c.name || ''}
+                          onChange={e => setEditForm(f => ({ ...f, comments: f.comments.map((x, j) => j === i ? { ...x, name: e.target.value } : x) }))}
+                          placeholder="名前"
+                          style={{ ...inp, fontSize: '0.75rem', padding: '4px 8px' }}
+                        />
+                        <textarea
+                          value={c.text || ''}
+                          onChange={e => setEditForm(f => ({ ...f, comments: f.comments.map((x, j) => j === i ? { ...x, text: e.target.value } : x) }))}
+                          rows={2}
+                          style={{ ...inp, fontSize: '0.75rem', padding: '4px 8px', resize: 'vertical' }}
+                        />
+                      </div>
+                      <button onClick={() => setEditForm(f => ({ ...f, comments: f.comments.filter((_, j) => j !== i) }))}
+                        style={{ ...s.rowBtn, color: C.pink, borderColor: C.pink, padding: '3px 8px', fontSize: '0.75rem', flexShrink: 0 }}>
+                        削除
+                      </button>
+                    </div>
+                  ))}
+                </div>
               )}
 
               {/* 日時 */}
