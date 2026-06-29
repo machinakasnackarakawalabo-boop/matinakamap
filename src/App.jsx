@@ -2571,6 +2571,7 @@ function PhotoGallery({ photos, onSlideChange }) {
 function PostDetailModal({ post, updatePost, tagMap, onClose }) {
   const [commentName, setCommentName] = useState('');
   const [commentText, setCommentText] = useState('');
+  const [likeName, setLikeName] = useState('');
   const [myId] = useState(() => {
     let id = localStorage.getItem('mn_userid');
     if (!id) { id = `u_${Math.random().toString(36).slice(2, 10)}`; localStorage.setItem('mn_userid', id); }
@@ -2579,18 +2580,22 @@ function PostDetailModal({ post, updatePost, tagMap, onClose }) {
 
   useEffect(() => {
     const saved = localStorage.getItem('mn_penname');
-    if (saved) setCommentName(saved);
+    if (saved) { setCommentName(saved); setLikeName(saved); }
   }, []);
 
   const likes = post.likes || [];
   const comments = post.comments || [];
-  const liked = likes.includes(myId);
+  const liked = likes.some(l => (typeof l === 'string' ? l : l.id) === myId);
+  const likeCount = likes.length;
 
-  const toggleLike = () => {
-    updatePost(post.id, (cur) => {
-      const cl = cur.likes || [];
-      return { ...cur, likes: liked ? cl.filter(x => x !== myId) : [...cl, myId] };
-    });
+  const handleLike = () => {
+    if (liked) return;
+    const name = likeName.trim().slice(0, 20) || '名無し';
+    try { localStorage.setItem('mn_penname', name); } catch {}
+    updatePost(post.id, (cur) => ({
+      ...cur,
+      likes: [...(cur.likes || []), { id: myId, name }]
+    }));
   };
 
   const addComment = () => {
@@ -2665,14 +2670,24 @@ function PostDetailModal({ post, updatePost, tagMap, onClose }) {
         <div style={{ fontFamily: FONT_HAND, fontSize: '0.75rem', color: C.inkSub, fontStyle: 'italic', marginBottom: 16, textAlign: 'right' }}>— {post.penname}</div>
 
         {/* いいね */}
-        <button onClick={toggleLike} style={{
-          ...s.likeBtn,
-          background: liked ? C.pinkLight : C.bgWhite,
-          borderColor: liked ? C.pink : C.line,
-          color: liked ? C.pink : C.inkSub
-        }}>
-          {liked ? '❤️' : '🤍'} いいね <strong>{likes.length}</strong>
-        </button>
+        {liked ? (
+          <div style={{ ...s.likeBtn, background: C.pinkLight, borderColor: C.pink, color: C.pink, border: '1.5px solid', borderRadius: 8, padding: 12, textAlign: 'center', fontFamily: FONT_HAND, fontSize: '0.9375rem', fontWeight: 700 }}>
+            ❤️ いいね済み <strong>{likeCount}</strong>
+          </div>
+        ) : (
+          <div style={{ display: 'flex', gap: 8 }}>
+            <input
+              value={likeName}
+              onChange={e => setLikeName(e.target.value)}
+              placeholder="ペンネーム"
+              maxLength={20}
+              style={{ ...s.input, flex: 1, fontSize: '0.875rem' }}
+            />
+            <button onClick={handleLike} style={{ ...s.likeBtn, width: 'auto', padding: '12px 20px', background: C.bgWhite, borderColor: C.line, color: C.inkSub, border: '1.5px solid', borderRadius: 8, fontFamily: FONT_HAND, fontSize: '0.9375rem', fontWeight: 700, cursor: 'pointer' }}>
+              🤍 いいね <strong>{likeCount}</strong>
+            </button>
+          </div>
+        )}
 
         {/* コメント */}
         <div style={{ marginTop: 20, paddingTop: 16, borderTop: `1px dashed ${C.line}` }}>
