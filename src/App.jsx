@@ -2585,16 +2585,16 @@ function PostDetailModal({ post, updatePost, tagMap, onClose }) {
 
   const likes = post.likes || [];
   const comments = post.comments || [];
-  const liked = likes.some(l => (typeof l === 'string' ? l : l.id) === myId);
   const likeCount = likes.length;
+  const trimmedLikeName = likeName.trim().slice(0, 20) || '名無し';
+  const liked = likes.some(l => (typeof l === 'object' ? l.name : l) === trimmedLikeName);
 
   const handleLike = () => {
     if (liked) return;
-    const name = likeName.trim().slice(0, 20) || '名無し';
-    try { localStorage.setItem('mn_penname', name); } catch {}
+    try { localStorage.setItem('mn_penname', trimmedLikeName); } catch {}
     updatePost(post.id, (cur) => ({
       ...cur,
-      likes: [...(cur.likes || []), { id: myId, name }]
+      likes: [...(cur.likes || []), { id: myId, name: trimmedLikeName }]
     }));
   };
 
