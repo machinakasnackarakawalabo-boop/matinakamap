@@ -1957,7 +1957,7 @@ function MapView({ posts, addPost, updatePost, stores, tags, settings, updateSet
           <span>LIVE 自動更新</span>
         </div>
         <div style={{ fontFamily: FONT_HAND, fontSize: '0.8125rem', color: C.inkSub, letterSpacing: 1 }}>
-          タブレットでも見れますのでお声がけください～
+          タブレットでも街中マップ見られますのでお声がけください～
         </div>
         <div style={{ fontFamily: FONT_HAND, color: C.green, letterSpacing: 2 }}>
           QRを読み込んで地図に貼ろう
