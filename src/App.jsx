@@ -2807,24 +2807,24 @@ function PostDetailModal({ post, updatePost, tagMap, onClose }) {
         )}
 
         {/* いいね */}
-        {liked ? (
-          <div style={{ ...s.likeBtn, background: C.pinkLight, borderColor: C.pink, color: C.pink, border: '1.5px solid', borderRadius: 8, padding: 12, textAlign: 'center', fontFamily: FONT_HAND, fontSize: '0.9375rem', fontWeight: 700 }}>
-            ❤️ いいね済み <strong>{likeCount}</strong>
-          </div>
-        ) : (
-          <div style={{ display: 'flex', gap: 8 }}>
-            <input
-              value={likeName}
-              onChange={e => setLikeName(e.target.value)}
-              placeholder="ペンネーム"
-              maxLength={20}
-              style={{ ...s.input, flex: 1, fontSize: '0.875rem' }}
-            />
+        <div style={{ display: 'flex', gap: 8 }}>
+          <input
+            value={likeName}
+            onChange={e => setLikeName(e.target.value)}
+            placeholder="ペンネーム"
+            maxLength={20}
+            style={{ ...s.input, flex: 1, fontSize: '0.875rem' }}
+          />
+          {liked ? (
+            <button disabled style={{ ...s.likeBtn, width: 'auto', padding: '12px 20px', background: C.pinkLight, borderColor: C.pink, color: C.pink, border: '1.5px solid', borderRadius: 8, fontFamily: FONT_HAND, fontSize: '0.9375rem', fontWeight: 700, cursor: 'default' }}>
+              ❤️ 済み <strong>{likeCount}</strong>
+            </button>
+          ) : (
             <button onClick={handleLike} style={{ ...s.likeBtn, width: 'auto', padding: '12px 20px', background: C.bgWhite, borderColor: C.line, color: C.inkSub, border: '1.5px solid', borderRadius: 8, fontFamily: FONT_HAND, fontSize: '0.9375rem', fontWeight: 700, cursor: 'pointer' }}>
               🤍 いいね <strong>{likeCount}</strong>
             </button>
-          </div>
-        )}
+          )}
+        </div>
 
         {/* コメント */}
         <div style={{ marginTop: 20, paddingTop: 16, borderTop: `1px dashed ${C.line}` }}>
