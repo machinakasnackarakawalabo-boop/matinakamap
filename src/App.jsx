@@ -1939,6 +1939,10 @@ function MapView({ posts, addPost, updatePost, stores, tags, settings, updateSet
         </aside>
       </main>
 
+      <div style={{ textAlign: 'center', fontFamily: FONT_HAND, fontSize: '0.8125rem', color: C.inkSub, padding: '8px 0 4px', letterSpacing: 1 }}>
+        タブレットでも見れますのでお声がけください～
+      </div>
+
       {/* 投稿詳細モーダル（いいね・コメント） */}
       {detailPost && (
         <PostDetailModal
