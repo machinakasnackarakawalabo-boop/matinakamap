@@ -2715,11 +2715,10 @@ function PostDetailModal({ post, updatePost, tagMap, onClose }) {
   const likes = post.likes || [];
   const comments = post.comments || [];
   const likeCount = likes.length;
-  const trimmedLikeName = likeName.trim().slice(0, 20) || '名無し';
-  const liked = likes.some(l => (typeof l === 'object' ? l.name : l) === trimmedLikeName);
+  const trimmedLikeName = likeName.trim().slice(0, 20);
 
   const handleLike = () => {
-    if (liked) return;
+    if (!trimmedLikeName) return;
     try { localStorage.setItem('mn_penname', trimmedLikeName); } catch {}
     updatePost(post.id, (cur) => ({
       ...cur,
@@ -2815,15 +2814,10 @@ function PostDetailModal({ post, updatePost, tagMap, onClose }) {
             maxLength={20}
             style={{ ...s.input, flex: 1, fontSize: '0.875rem' }}
           />
-          {liked ? (
-            <button disabled style={{ ...s.likeBtn, width: 'auto', padding: '12px 20px', background: C.pinkLight, borderColor: C.pink, color: C.pink, border: '1.5px solid', borderRadius: 8, fontFamily: FONT_HAND, fontSize: '0.9375rem', fontWeight: 700, cursor: 'default' }}>
-              ❤️ 済み <strong>{likeCount}</strong>
-            </button>
-          ) : (
-            <button onClick={handleLike} style={{ ...s.likeBtn, width: 'auto', padding: '12px 20px', background: C.bgWhite, borderColor: C.line, color: C.inkSub, border: '1.5px solid', borderRadius: 8, fontFamily: FONT_HAND, fontSize: '0.9375rem', fontWeight: 700, cursor: 'pointer' }}>
-              🤍 いいね <strong>{likeCount}</strong>
-            </button>
-          )}
+          <button onClick={handleLike} disabled={!trimmedLikeName}
+            style={{ ...s.likeBtn, width: 'auto', padding: '12px 20px', background: trimmedLikeName ? C.bgWhite : C.bgGray, borderColor: trimmedLikeName ? C.line : C.bgGray, color: trimmedLikeName ? C.inkSub : C.inkLight, border: '1.5px solid', borderRadius: 8, fontFamily: FONT_HAND, fontSize: '0.9375rem', fontWeight: 700, cursor: trimmedLikeName ? 'pointer' : 'default' }}>
+            🤍 いいね <strong>{likeCount}</strong>
+          </button>
         </div>
 
         {/* コメント */}
