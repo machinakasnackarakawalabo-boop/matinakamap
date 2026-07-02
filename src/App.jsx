@@ -646,17 +646,26 @@ function useSettings() {
 // =====================================
 // 写真リサイズヘルパー（共通）
 // =====================================
-function resizeImageFile(file, callback) {
-  if (!file.type.startsWith('image/')) {
-    alert('画像ファイルを選択してください');
-    return;
-  }
-  if (file.type === 'image/heic' || file.type === 'image/heif' || file.name.toLowerCase().endsWith('.heic') || file.name.toLowerCase().endsWith('.heif')) {
-    alert('HEICファイルは使用できません。\niPhoneの設定を変更してJPEGで保存するか、変換してから使用してください。\n\n【設定方法】設定 → カメラ → フォーマット → 互換性優先');
-    return;
-  }
+async function resizeImageFile(file, callback) {
   if (file.size > 10 * 1024 * 1024) {
     alert('ファイルが大きすぎます（10MBまで）');
+    return;
+  }
+  const isHeic = file.type === 'image/heic' || file.type === 'image/heif'
+    || file.name.toLowerCase().endsWith('.heic') || file.name.toLowerCase().endsWith('.heif');
+  let processFile = file;
+  if (isHeic) {
+    try {
+      const heic2any = (await import('heic2any')).default;
+      const blob = await heic2any({ blob: file, toType: 'image/jpeg', quality: 0.85 });
+      processFile = Array.isArray(blob) ? blob[0] : blob;
+    } catch (e) {
+      alert('HEIC変換に失敗しました。JPEGまたはPNGの画像をお使いください。');
+      return;
+    }
+  }
+  if (!processFile.type.startsWith('image/')) {
+    alert('画像ファイルを選択してください');
     return;
   }
   const reader = new FileReader();
@@ -675,11 +684,11 @@ function resizeImageFile(file, callback) {
       callback(canvas.toDataURL('image/jpeg', 0.75));
     };
     img.onerror = () => {
-      alert('この画像は読み込めませんでした。\nJPEGまたはPNG形式の画像をお使いください。\n\niPhoneの場合：設定 → カメラ → フォーマット → 互換性優先');
+      alert('この画像は読み込めませんでした。JPEGまたはPNG形式の画像をお使いください。');
     };
     img.src = ev.target.result;
   };
-  reader.readAsDataURL(file);
+  reader.readAsDataURL(processFile);
 }
 
 const AGE_OPTIONS = ['10代', '20代', '30代', '40代', '50代', '60代', '70代以上'];
