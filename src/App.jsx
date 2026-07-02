@@ -1667,15 +1667,27 @@ function MapView({ posts, addPost, updatePost, stores, tags, settings, updateSet
     return activeRegions.filter(r => !hidden.includes(r));
   }, [activeRegions, settings.slideshowHiddenRegions]);
 
-  // スライドショー
+  // 地域ごとの投稿数を取得
+  const getRegionPostCount = useCallback((region) => {
+    if (region === '全国') return posts.length;
+    if (region === '愛知') return posts.filter(p => p.prefecture === 'aichi').length;
+    if (region === '東京23区') return posts.filter(p => p.prefecture === 'tokyo').length;
+    return posts.filter(p => p.region === region).length;
+  }, [posts]);
+
+  // スライドショー（投稿数に比例した表示時間）
   useEffect(() => {
     if (!slideshow || slideshowRegions.length === 0) return;
     setRegionIdx(prev => prev % slideshowRegions.length);
-    const interval = setInterval(() => {
+    const currentRegion = slideshowRegions[regionIdx % slideshowRegions.length];
+    const count = getRegionPostCount(currentRegion);
+    // 1投稿あたり約9秒（スクロール速度0.4px/fに対しカード高さ約200px）、最低12秒
+    const delay = Math.max(12000, count * 9000);
+    const timer = setTimeout(() => {
       setRegionIdx(prev => (prev + 1) % slideshowRegions.length);
-    }, 10000);
-    return () => clearInterval(interval);
-  }, [slideshow, slideshowRegions.length]);
+    }, delay);
+    return () => clearTimeout(timer);
+  }, [slideshow, slideshowRegions.length, regionIdx, getRegionPostCount]);
 
   useEffect(() => {
     const t = setInterval(() => setTime(new Date()), 30000);
