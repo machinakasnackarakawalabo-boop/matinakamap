@@ -651,6 +651,10 @@ function resizeImageFile(file, callback) {
     alert('画像ファイルを選択してください');
     return;
   }
+  if (file.type === 'image/heic' || file.type === 'image/heif' || file.name.toLowerCase().endsWith('.heic') || file.name.toLowerCase().endsWith('.heif')) {
+    alert('HEICファイルは使用できません。\niPhoneの設定を変更してJPEGで保存するか、変換してから使用してください。\n\n【設定方法】設定 → カメラ → フォーマット → 互換性優先');
+    return;
+  }
   if (file.size > 10 * 1024 * 1024) {
     alert('ファイルが大きすぎます（10MBまで）');
     return;
@@ -669,6 +673,9 @@ function resizeImageFile(file, callback) {
       const ctx = canvas.getContext('2d');
       ctx.drawImage(img, 0, 0, w, h);
       callback(canvas.toDataURL('image/jpeg', 0.75));
+    };
+    img.onerror = () => {
+      alert('この画像は読み込めませんでした。\nJPEGまたはPNG形式の画像をお使いください。\n\niPhoneの場合：設定 → カメラ → フォーマット → 互換性優先');
     };
     img.src = ev.target.result;
   };
