@@ -3149,7 +3149,7 @@ function PostDetailModal({ post, updatePost, tagMap, onClose }) {
 
   return (
     <div style={s.modalOverlay} onClick={onClose}>
-      <div style={{ ...s.modal, maxWidth: 460, position: 'relative' }} onClick={(e) => e.stopPropagation()}>
+      <div className="mn-modal" style={{ ...s.modal, maxWidth: 460, position: 'relative' }} onClick={(e) => e.stopPropagation()}>
         <button onClick={onClose} aria-label="閉じる"
           style={{ position: 'absolute', top: 10, right: 10, zIndex: 1,
             width: 34, height: 34, borderRadius: '50%', cursor: 'pointer',
@@ -3690,6 +3690,7 @@ function CustomerBrowse({ posts, updatePost, tags, postsLoading = false, postsLo
   const tagMap = useMemo(() => Object.fromEntries((tags || []).map(t => [t.key, t])), [tags]);
   const [q, setQ] = useState('');
   const [tagFilter, setTagFilter] = useState('');
+  const [regionFilter, setRegionFilter] = useState('');
   const [detailPost, setDetailPost] = useState(null);
 
   // 検索対象：本文・ペンネーム・県名・お店・区やサブ地域・場所名・タグ名
@@ -3700,8 +3701,16 @@ function CustomerBrowse({ posts, updatePost, tags, postsLoading = false, postsLo
     ...(p.tags || []).map(k => tagMap[k]?.label || k),
   ].filter(Boolean).join(' ').toLowerCase(), [tagMap]);
 
+  // 実際に投稿がある地域だけを件数つきで出す
+  const regions = useMemo(() => {
+    const c = new Map();
+    posts.forEach(p => { const r = p.region; if (r) c.set(r, (c.get(r) || 0) + 1); });
+    return [...c.entries()].sort((x, y) => y[1] - x[1]);
+  }, [posts]);
+
   const results = useMemo(() => {
     let list = posts;
+    if (regionFilter) list = list.filter(p => p.region === regionFilter);
     const kw = q.trim().toLowerCase();
     if (kw) {
       // 空白区切りの複数語はすべて含むものを残す
@@ -3710,9 +3719,9 @@ function CustomerBrowse({ posts, updatePost, tags, postsLoading = false, postsLo
     }
     if (tagFilter) list = list.filter(p => (p.tags || []).includes(tagFilter));
     return list;   // posts は新しい順で入ってくる
-  }, [posts, q, tagFilter, searchIndex]);
+  }, [posts, q, tagFilter, regionFilter, searchIndex]);
 
-  const searching = q.trim() !== '' || tagFilter !== '';
+  const searching = q.trim() !== '' || tagFilter !== '' || regionFilter !== '';
   const emptyText = searching ? '該当する投稿が見つかりませんでした' : 'まだ投稿がありません';
 
   return (
@@ -3736,16 +3745,36 @@ function CustomerBrowse({ posts, updatePost, tags, postsLoading = false, postsLo
         </div>
       </div>
 
-      {/* タグで絞る（横スクロール） */}
+      {/* 地域で絞る */}
+      {regions.length > 0 && (
+        <div style={{ display: 'flex', gap: 6, flexWrap: 'wrap', padding: '10px 12px 0' }}>
+          <button onClick={() => setRegionFilter('')}
+            style={{ ...s.browseChip, ...(regionFilter === '' ? { background: C.ink, borderColor: C.ink, color: '#fff', fontWeight: 700 } : {}) }}>
+            すべての地域
+          </button>
+          {regions.map(([r, n]) => {
+            const on = regionFilter === r;
+            const col = REGION_COLOR(r);
+            return (
+              <button key={r} onClick={() => setRegionFilter(on ? '' : r)}
+                style={{ ...s.browseChip, borderColor: on ? col : C.line,
+                  background: on ? col : C.bgWhite, color: on ? '#fff' : C.inkSub, fontWeight: on ? 700 : 500 }}>
+                {r} {n}
+              </button>
+            );
+          })}
+        </div>
+      )}
+
+      {/* タグで絞る（折り返して全部表示） */}
       {(tags || []).length > 0 && (
-        <div style={{ display: 'flex', gap: 6, overflowX: 'auto', padding: '10px 12px 0', WebkitOverflowScrolling: 'touch' }}>
+        <div style={{ display: 'flex', gap: 6, flexWrap: 'wrap', padding: '10px 12px 0' }}>
           {(tags || []).map(t => {
             const on = tagFilter === t.key;
             return (
               <button key={t.key} onClick={() => setTagFilter(on ? '' : t.key)}
-                style={{ flexShrink: 0, padding: '5px 12px', borderRadius: 999, cursor: 'pointer',
-                  fontFamily: FONT_HAND, fontSize: '0.8125rem', fontWeight: on ? 700 : 500,
-                  border: `1.5px solid ${on ? t.color : C.line}`,
+                style={{ ...s.browseChip, fontWeight: on ? 700 : 500,
+                  borderColor: on ? t.color : C.line,
                   background: on ? t.color + '22' : C.bgWhite, color: on ? t.color : C.inkSub }}>
                 {t.emoji}{t.label}
               </button>
@@ -6339,7 +6368,7 @@ const s = {
 
   // FAB
   fabPost: {
-    position: 'fixed', bottom: 20, right: 20, zIndex: 100,
+    position: 'fixed', bottom: 'calc(20px + env(safe-area-inset-bottom, 0px))', right: 20, zIndex: 100,
     display: 'flex', alignItems: 'center', gap: 6,
     padding: '14px 20px',
     background: C.pink, color: '#fff',
@@ -6450,6 +6479,8 @@ const s = {
 
   // フィルタバー
   filterBar: { borderBottom: `1px solid ${C.line}`, background: C.bgOff, flexShrink: 0 },
+  browseChip: { padding: '5px 11px', borderRadius: 999, cursor: 'pointer', border: `1.5px solid ${C.line}`,
+    fontFamily: FONT_HAND, fontSize: '0.8125rem', lineHeight: 1.4, whiteSpace: 'nowrap' },
   listTabs: { display: 'flex', gap: 4, padding: 6, borderBottom: `1px solid ${C.line}`, background: C.bgWhite, flexShrink: 0 },
   listTab: { flex: 1, padding: '7px 8px', border: 'none', borderRadius: 999, cursor: 'pointer',
     background: 'transparent', color: C.inkSub, fontFamily: FONT_HAND, fontSize: '0.8125rem', fontWeight: 600, letterSpacing: 1 },
@@ -6578,7 +6609,7 @@ const s = {
 
   // モーダル
   modalOverlay: { position: 'fixed', inset: 0, background: 'rgba(0,0,0,0.4)', display: 'flex', alignItems: 'center', justifyContent: 'center', zIndex: 2000, backdropFilter: 'blur(4px)' },
-  modal: { background: C.bgWhite, touchAction: 'pan-y', padding: 32, maxWidth: 500, width: '90%', border: `1px solid ${C.line}`, borderRadius: 6, boxShadow: '0 30px 60px rgba(0,0,0,0.2)', maxHeight: '90vh', overflow: 'auto' },
+  modal: { background: C.bgWhite, touchAction: 'pan-y', padding: 32, maxWidth: 500, width: '90%', border: `1px solid ${C.line}`, borderRadius: 6, boxShadow: '0 30px 60px rgba(0,0,0,0.2)', maxHeight: '90vh', overflow: 'auto' },  // 高さは .mn-modal で上書きされる
   modalLabel: { display: 'block', fontFamily: FONT_DISPLAY, fontSize: '0.75rem', fontWeight: 600, color: C.ink, marginBottom: 6, letterSpacing: 3 },
   modalBtnGhost: { padding: '10px 20px', background: 'transparent', border: `1.5px solid ${C.ink}`, fontFamily: FONT_HAND, fontSize: '0.875rem', fontWeight: 600, cursor: 'pointer', color: C.ink, borderRadius: 4 },
   modalBtnPrimary: { padding: '10px 20px', background: C.green, border: 'none', fontFamily: FONT_HAND, fontSize: '0.875rem', fontWeight: 600, cursor: 'pointer', color: '#fff', borderRadius: 4 },
@@ -6728,6 +6759,10 @@ if (typeof document !== 'undefined' && !document.getElementById('mn-global-style
     /* 画面固定レイアウトの高さ。svh はツールバーの出入りで値が変わらないので揺れない。
        未対応ブラウザは 100vh にフォールバックする */
     .mn-screen { height: 100vh; }
+    /* iPhoneのホームバーに「閉じる」が隠れないよう下端に余白を足す。
+       dvh 未対応ブラウザは 90vh にフォールバック */
+    .mn-modal { max-height: 90vh; max-height: 90dvh;
+      padding-bottom: calc(32px + env(safe-area-inset-bottom, 0px)) !important; }
     @supports (height: 100svh) { .mn-screen { height: 100svh; } }
     @keyframes pulse { 0%, 100% { opacity: 1; transform: scale(1); } 50% { opacity: 0.4; transform: scale(1.3); } }
     @keyframes mnspin { to { transform: rotate(360deg); } }
