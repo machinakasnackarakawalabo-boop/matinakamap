@@ -2882,8 +2882,117 @@ function FilterPanel({ prefFilter, setPrefFilter, subFilter, setSubFilter, tagFi
 // =====================================
 // 写真ギャラリー（複数写真の左右スライダー）
 // =====================================
+// 写真の全画面ビューア（ピンチ／ホイールで拡大、ドラッグで移動、ダブルタップで切替）
+function PhotoViewer({ photos, index = 0, onClose }) {
+  const list = Array.isArray(photos) ? photos : [];
+  const [i, setI] = useState(index);
+  const [scale, setScale] = useState(1);
+  const [t, setT] = useState({ x: 0, y: 0 });
+  const gesture = useRef(null);
+  const lastTap = useRef(0);
+
+  const clamp = (v) => Math.min(5, Math.max(1, v));
+  const reset = () => { setScale(1); setT({ x: 0, y: 0 }); };
+  const go = (d) => { setI(v => (v + d + list.length) % list.length); reset(); };
+  const dist = (ts) => Math.hypot(ts[0].clientX - ts[1].clientX, ts[0].clientY - ts[1].clientY);
+
+  // Escで閉じる／矢印キーで送る
+  useEffect(() => {
+    const onKey = (e) => {
+      if (e.key === 'Escape') onClose();
+      else if (e.key === 'ArrowLeft' && list.length > 1) go(-1);
+      else if (e.key === 'ArrowRight' && list.length > 1) go(1);
+    };
+    window.addEventListener('keydown', onKey);
+    return () => window.removeEventListener('keydown', onKey);
+  });
+
+  const onTouchStart = (e) => {
+    if (e.touches.length === 2) {
+      gesture.current = { mode: 'pinch', d: dist(e.touches), scale };
+    } else if (e.touches.length === 1) {
+      const now = Date.now();
+      if (now - lastTap.current < 300) {           // ダブルタップで拡大／等倍
+        if (scale > 1) reset(); else setScale(2.5);
+        lastTap.current = 0;
+      } else {
+        lastTap.current = now;
+      }
+      gesture.current = { mode: 'pan', x: e.touches[0].clientX, y: e.touches[0].clientY, t };
+    }
+  };
+  const onTouchMove = (e) => {
+    const g = gesture.current;
+    if (!g) return;
+    if (g.mode === 'pinch' && e.touches.length === 2) {
+      setScale(clamp(g.scale * (dist(e.touches) / g.d)));
+    } else if (g.mode === 'pan' && e.touches.length === 1 && scale > 1) {
+      setT({ x: g.t.x + (e.touches[0].clientX - g.x), y: g.t.y + (e.touches[0].clientY - g.y) });
+    }
+  };
+  const onTouchEnd = () => { gesture.current = null; if (scale <= 1) setT({ x: 0, y: 0 }); };
+
+  const onWheel = (e) => {
+    const next = clamp(scale - e.deltaY * 0.002);
+    setScale(next);
+    if (next <= 1) setT({ x: 0, y: 0 });
+  };
+
+  const btn = {
+    position: 'absolute', zIndex: 2, width: 40, height: 40, borderRadius: '50%', cursor: 'pointer',
+    border: 'none', background: 'rgba(0,0,0,0.55)', color: '#fff', fontSize: '1.375rem', lineHeight: 1,
+    display: 'flex', alignItems: 'center', justifyContent: 'center',
+  };
+
+  return (
+    <div
+      onClick={onClose}
+      onTouchStart={onTouchStart} onTouchMove={onTouchMove} onTouchEnd={onTouchEnd}
+      onWheel={onWheel}
+      style={{ position: 'fixed', inset: 0, zIndex: 3000, background: 'rgba(0,0,0,0.93)',
+        display: 'flex', alignItems: 'center', justifyContent: 'center', overflow: 'hidden', touchAction: 'none' }}
+    >
+      <img
+        src={list[i]}
+        alt={`写真${i + 1}`}
+        onClick={(e) => e.stopPropagation()}
+        onDoubleClick={(e) => { e.stopPropagation(); scale > 1 ? reset() : setScale(2.5); }}
+        style={{ maxWidth: '100%', maxHeight: '100%', objectFit: 'contain', display: 'block',
+          transform: `translate(${t.x}px, ${t.y}px) scale(${scale})`,
+          transition: gesture.current ? 'none' : 'transform 0.18s ease-out',
+          cursor: scale > 1 ? 'grab' : 'zoom-in', userSelect: 'none', WebkitUserDrag: 'none' }}
+      />
+
+      <button onClick={onClose} aria-label="閉じる" style={{ ...btn, top: 14, right: 14 }}>×</button>
+
+      {scale > 1 && (
+        <button onClick={(e) => { e.stopPropagation(); reset(); }} style={{ ...btn, top: 14, left: 14, width: 'auto', padding: '0 14px', borderRadius: 999, fontSize: '0.8125rem', fontFamily: FONT_HAND }}>
+          等倍に戻す
+        </button>
+      )}
+
+      {list.length > 1 && scale === 1 && (
+        <>
+          <button onClick={(e) => { e.stopPropagation(); go(-1); }} style={{ ...btn, left: 10, top: '50%', transform: 'translateY(-50%)' }}>‹</button>
+          <button onClick={(e) => { e.stopPropagation(); go(1); }} style={{ ...btn, right: 10, top: '50%', transform: 'translateY(-50%)' }}>›</button>
+          <div style={{ position: 'absolute', bottom: 18, left: '50%', transform: 'translateX(-50%)', color: '#fff', fontFamily: FONT_LATIN, fontSize: '0.75rem', background: 'rgba(0,0,0,0.5)', padding: '4px 12px', borderRadius: 999 }}>
+            {i + 1} / {list.length}
+          </div>
+        </>
+      )}
+
+      {scale === 1 && (
+        <div style={{ position: 'absolute', bottom: list.length > 1 ? 52 : 18, left: '50%', transform: 'translateX(-50%)', color: 'rgba(255,255,255,0.65)', fontFamily: FONT_HAND, fontSize: '0.75rem' }}>
+          ピンチ、またはダブルタップで拡大
+        </div>
+      )}
+    </div>
+  );
+}
+
 function PhotoGallery({ photos, onSlideChange }) {
   const [idx, setIdx] = useState(0);
+  const [zoom, setZoom] = useState(false);
   const list = Array.isArray(photos) && photos.length > 0 ? photos : [];
 
   const prev = (e) => {
@@ -2907,7 +3016,12 @@ function PhotoGallery({ photos, onSlideChange }) {
 
   return (
     <div style={s.galleryWrap} onClick={(e) => e.stopPropagation()}>
-      <img src={list[idx]} alt={`写真${idx + 1}`} style={s.galleryImg}/>
+      <img src={list[idx]} alt={`写真${idx + 1}`} onClick={() => setZoom(true)}
+        style={{ ...s.galleryImg, cursor: 'zoom-in' }}/>
+      <div style={{ position: 'absolute', top: 8, left: 8, pointerEvents: 'none',
+        background: 'rgba(0,0,0,0.5)', color: '#fff', borderRadius: 999, padding: '3px 10px',
+        fontFamily: FONT_HAND, fontSize: '0.6875rem' }}>🔍 タップで拡大</div>
+      {zoom && <PhotoViewer photos={list} index={idx} onClose={() => setZoom(false)}/>}
       {list.length > 1 && (
         <>
           <button onClick={prev} style={{ ...s.galleryArrow, left: 6 }}>‹</button>
@@ -2944,13 +3058,24 @@ function PostDetailModal({ post, updatePost, tagMap, onClose }) {
   const likeCount = likes.length;
   const trimmedLikeName = likeName.trim().slice(0, 20);
 
+  // 同じペンネームからは1回だけ。共用タブレットで別の人が自分の名前で押せる作りは維持する。
+  const sameName = (l) => (l?.name || '').trim() === trimmedLikeName;
+  const alreadyLiked = !!trimmedLikeName && likes.some(sameName);
+
   const handleLike = () => {
     if (!trimmedLikeName) return;
     try { localStorage.setItem('mn_penname', trimmedLikeName); } catch {}
-    updatePost(post.id, (cur) => ({
-      ...cur,
-      likes: [...(cur.likes || []), { id: myId, name: trimmedLikeName }]
-    }));
+    updatePost(post.id, (cur) => {
+      const list = cur.likes || [];
+      const hit = list.some(l => (l?.name || '').trim() === trimmedLikeName);
+      return {
+        ...cur,
+        // 押し済みならもう一度押すと取り消し
+        likes: hit
+          ? list.filter(l => (l?.name || '').trim() !== trimmedLikeName)
+          : [...list, { id: myId, name: trimmedLikeName }],
+      };
+    });
   };
 
   const addComment = () => {
@@ -2967,8 +3092,14 @@ function PostDetailModal({ post, updatePost, tagMap, onClose }) {
 
   return (
     <div style={s.modalOverlay} onClick={onClose}>
-      <div style={{ ...s.modal, maxWidth: 460 }} onClick={(e) => e.stopPropagation()}>
-        <div style={{ display: 'flex', justifyContent: 'flex-end', marginBottom: 12 }}>
+      <div style={{ ...s.modal, maxWidth: 460, position: 'relative' }} onClick={(e) => e.stopPropagation()}>
+        <button onClick={onClose} aria-label="閉じる"
+          style={{ position: 'absolute', top: 10, right: 10, zIndex: 1,
+            width: 34, height: 34, borderRadius: '50%', cursor: 'pointer',
+            border: `1px solid ${C.line}`, background: C.bgWhite, color: C.inkSub,
+            fontSize: '1.125rem', lineHeight: 1, display: 'flex', alignItems: 'center', justifyContent: 'center' }}>×</button>
+
+        <div style={{ display: 'flex', justifyContent: 'flex-end', marginBottom: 12, paddingRight: 34 }}>
           <span style={{ fontFamily: FONT_HAND, fontSize: '0.75rem', color: C.inkSub, fontStyle: 'italic' }}>— {post.penname}</span>
         </div>
 
@@ -3042,8 +3173,14 @@ function PostDetailModal({ post, updatePost, tagMap, onClose }) {
             style={{ ...s.input, flex: 1, fontSize: '0.875rem' }}
           />
           <button onClick={trimmedLikeName ? handleLike : undefined} disabled={!trimmedLikeName}
-            style={{ ...s.likeBtn, width: 'auto', padding: '12px 20px', background: trimmedLikeName ? C.bgWhite : C.bgGray, borderColor: trimmedLikeName ? C.line : C.bgGray, color: trimmedLikeName ? C.inkSub : C.inkLight, border: '1.5px solid', borderRadius: 8, fontFamily: FONT_HAND, fontSize: '0.9375rem', fontWeight: 700, cursor: trimmedLikeName ? 'pointer' : 'default', pointerEvents: trimmedLikeName ? 'auto' : 'none' }}>
-            🤍 いいね <strong>{likeCount}</strong>
+            title={alreadyLiked ? 'もう一度押すと取り消せます' : undefined}
+            style={{ ...s.likeBtn, width: 'auto', padding: '12px 20px',
+              background: alreadyLiked ? C.pinkLight : (trimmedLikeName ? C.bgWhite : C.bgGray),
+              borderColor: alreadyLiked ? C.pink : (trimmedLikeName ? C.line : C.bgGray),
+              color: alreadyLiked ? C.pink : (trimmedLikeName ? C.inkSub : C.inkLight),
+              border: '1.5px solid', borderRadius: 8, fontFamily: FONT_HAND, fontSize: '0.9375rem', fontWeight: 700,
+              cursor: trimmedLikeName ? 'pointer' : 'default', pointerEvents: trimmedLikeName ? 'auto' : 'none' }}>
+            {alreadyLiked ? '❤️' : '🤍'} いいね <strong>{likeCount}</strong>
           </button>
         </div>
 
