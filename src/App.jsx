@@ -302,6 +302,18 @@ function AccentLine({ height = 3, style = {} }) {
 // =====================================
 // データフック（シンプル版・無限ループ回避）
 // =====================================
+// 一覧表示に必要なフィールド。写真(photo/photos)はサイズが大きいのでここには入れず、
+// 後追いで取得する。投稿に項目を増やしたらここにも追加すること。
+const LIGHT_FIELDS = [
+  'id',
+  'data->>id', 'data->>penname', 'data->>message', 'data->>prefecture', 'data->>prefectureName',
+  'data->>region', 'data->>storeId', 'data->>storeName', 'data->>country',
+  'data->>ageGroup', 'data->>gender', 'data->>url',
+  'data->>tokyoWard', 'data->>arakawaSubRegion', 'data->>aichiSubRegion',
+  'data->tags', 'data->likes', 'data->comments', 'data->detail',
+  'data->timestamp', 'data->featured',
+].join(',');
+
 function usePosts() {
   const postsMapRef = useRef({});
 
@@ -327,17 +339,51 @@ function usePosts() {
     if (!supabase) return;
     let mounted = true;
 
-    // 全件取得してマージ
-    supabase.from('posts').select('data').then(({ data, error }) => {
+    // 写真は base64 で data に埋まっていて全体の約99%を占める（実測31.9MB中30.4MB）。
+    // select('data') で一括取得すると数十秒かかり、Supabaseのタイムアウトに当たると
+    // 途中で切れて投稿数が欠ける。そこで2段階に分ける：
+    //   1) 写真以外だけ取得して即座に一覧を出す（約0.1MB）
+    //   2) 写真は新しい順に少しずつ後追いで取得してマージする
+    const run = async () => {
+      // --- 1段目：軽いフィールドだけ ---
+      const { data: light, error } = await supabase
+        .from('posts')
+        .select(LIGHT_FIELDS)
+        .order('id', { ascending: false });
       if (!mounted) return;
-      if (error || !data) { setLoadError(true); setLoading(false); return; }
+      if (error || !light) { setLoadError(true); setLoading(false); return; }
+
       const map = { ...postsMapRef.current };
-      data.forEach(row => { if (row.data?.id) map[row.data.id] = row.data; });
+      light.forEach(row => {
+        const id = row.id;
+        if (!id) return;
+        // 端末に残っている写真は捨てずに引き継ぐ
+        const prevPhotos = map[id] ? { photo: map[id].photo, photos: map[id].photos } : {};
+        map[id] = { ...prevPhotos, ...Object.fromEntries(Object.entries(row).filter(([, v]) => v !== null)), id };
+      });
       setFromMap(map);
       setLoading(false);
-    }, () => {
-      if (mounted) { setLoadError(true); setLoading(false); }
-    });
+
+      // --- 2段目：写真を新しい順に分割取得 ---
+      const ids = light.map(r => r.id).filter(Boolean);
+      const CHUNK = 8;
+      for (let i = 0; i < ids.length; i += CHUNK) {
+        if (!mounted) return;
+        const part = ids.slice(i, i + CHUNK);
+        const { data: pics } = await supabase
+          .from('posts')
+          .select('id,data->photo,data->photos')
+          .in('id', part);
+        if (!mounted || !pics) continue;
+        const next = { ...postsMapRef.current };
+        pics.forEach(r => {
+          if (!next[r.id]) return;
+          next[r.id] = { ...next[r.id], photo: r.photo || null, photos: r.photos || null };
+        });
+        setFromMap(next);
+      }
+    };
+    run().catch(() => { if (mounted) { setLoadError(true); setLoading(false); } });
 
     // リアルタイム購読（お客様が投稿したら即反映）
     const channel = supabase.channel('posts-realtime')
@@ -397,6 +443,17 @@ function usePosts() {
     setFromMap(map);
     if (supabase) {
       try {
+        // 写真は後追いで取得しているため、未取得のまま upsert すると本番の写真を消してしまう。
+        // undefined（未取得）のときだけ DB から取り直して合流させる。null は「写真なし」なのでそのまま。
+        if (updated.photo === undefined || updated.photos === undefined) {
+          const { data: pic, error: pe } = await supabase
+            .from('posts').select('data->photo,data->photos').eq('id', id).maybeSingle();
+          if (pe) { console.error('Supabase updatePost(photo):', pe); return pe; }
+          if (updated.photo === undefined) updated.photo = pic?.photo ?? null;
+          if (updated.photos === undefined) updated.photos = pic?.photos ?? null;
+          map[id] = updated;
+          setFromMap(map);
+        }
         const { error } = await supabase.from('posts').upsert({ id: updated.id, data: updated });
         if (error) {
           console.error('Supabase updatePost:', error);
