@@ -311,6 +311,11 @@ function usePosts() {
     return Object.values(map).sort((a, b) => b.timestamp - a.timestamp);
   });
 
+  // 初回取得が終わるまで true。端末に何も残っていないスマホで「投稿0件」と
+  // 誤解されないよう、読み込み中であることを画面に出すために使う。
+  const [loading, setLoading] = useState(!!supabase);
+  const [loadError, setLoadError] = useState(false);
+
   const setFromMap = (map) => {
     postsMapRef.current = map;
     safeSave(KEYS.posts, map);
@@ -324,10 +329,14 @@ function usePosts() {
 
     // 全件取得してマージ
     supabase.from('posts').select('data').then(({ data, error }) => {
-      if (!mounted || error || !data) return;
+      if (!mounted) return;
+      if (error || !data) { setLoadError(true); setLoading(false); return; }
       const map = { ...postsMapRef.current };
       data.forEach(row => { if (row.data?.id) map[row.data.id] = row.data; });
-      if (mounted) setFromMap(map);
+      setFromMap(map);
+      setLoading(false);
+    }, () => {
+      if (mounted) { setLoadError(true); setLoading(false); }
     });
 
     // リアルタイム購読（お客様が投稿したら即反映）
@@ -401,7 +410,7 @@ function usePosts() {
     return null;
   }, []);
 
-  return { posts, addPost, removePost, removeAllPosts, updatePost };
+  return { posts, addPost, removePost, removeAllPosts, updatePost, loading, loadError };
 }
 
 function useStores() {
@@ -1554,7 +1563,27 @@ function PostForm({ onSubmit, onCancel, stores, tags: availableTags }) {
 // =====================================
 // マップ画面（店内表示）
 // =====================================
-function MapView({ posts, addPost, updatePost, stores, tags, settings, updateSettings }) {
+// スマホ幅かどうか（レイアウト切替用）
+function useIsMobile(breakpoint = 767) {
+  const query = `(max-width: ${breakpoint}px)`;
+  const [isMobile, setIsMobile] = useState(() => window.matchMedia(query).matches);
+  useEffect(() => {
+    const mq = window.matchMedia(query);
+    const sync = () => setIsMobile(mq.matches);
+    mq.addEventListener('change', sync);
+    // 環境によっては matchMedia の change が飛ばないことがあるため resize でも同期する
+    window.addEventListener('resize', sync);
+    sync();
+    return () => {
+      mq.removeEventListener('change', sync);
+      window.removeEventListener('resize', sync);
+    };
+  }, [query]);
+  return isMobile;
+}
+
+// mobile: 縦積みレイアウト / allowPinEdit: ピン調整UIの表示（お客様モードでは false）
+function MapView({ posts, addPost, updatePost, stores, tags, settings, updateSettings, mobile = false, allowPinEdit = true, embedded = false, postsLoading = false, postsLoadError = false }) {
   const tagMap = useMemo(() => Object.fromEntries((tags || []).map(t => [t.key, t])), [tags]);
   const [showForm, setShowForm] = useState(false);
   const [detailPost, setDetailPost] = useState(null);  // 投稿詳細モーダル
@@ -1568,14 +1597,59 @@ function MapView({ posts, addPost, updatePost, stores, tags, settings, updateSet
   const containerRef = useRef(null);
   const mapSvgRef = useRef(null);                       // ピンドラッグ用SVG参照
 
-  // ピンドラッグ：SVG上の相対座標(0-1)に変換して保存
+  // タブレット/PCの固定レイアウト中だけ、ページ自体のスクロールを止める。
+  // スマホ(mobile)は「マップは一番上に戻れば見える」ページスクロール前提なので触らない。
+  // 掲示板・管理・QR・投稿フォームは minHeight:100vh でスクロールが要るため、
+  // body への lock はこの画面が表示されている間に限定する。
+  useEffect(() => {
+    if (mobile) return;
+    const body = document.body;
+    const keys = ['position', 'top', 'left', 'right', 'width', 'overflow'];
+    const prev = Object.fromEntries(keys.map(k => [k, body.style[k]]));
+    const y = window.scrollY;
+    // iOS Safari は body の overflow:hidden を指スクロールに対して無視するため、
+    // position:fixed で固定する。ラバーバンドの跳ねもこれで止まる。
+    body.style.position = 'fixed';
+    body.style.top = `-${y}px`;
+    body.style.left = '0';
+    body.style.right = '0';
+    body.style.width = '100%';
+    body.style.overflow = 'hidden';
+    const prevHtmlOverflow = document.documentElement.style.overflow;
+    document.documentElement.style.overflow = 'hidden';
+    return () => {
+      document.documentElement.style.overflow = prevHtmlOverflow;
+      keys.forEach(k => { body.style[k] = prev[k]; });
+      window.scrollTo(0, y);
+    };
+  }, [mobile]);
+
+  // ピンドラッグ：地図の座標系での相対位置(0-1)に変換して保存
   const handlePinDrag = useCallback((key, clientX, clientY) => {
-    const svg = mapSvgRef.current;
-    if (!svg) return;
-    const rect = svg.getBoundingClientRect();
-    const x = Math.max(0, Math.min(1, (clientX - rect.left) / rect.width));
-    const y = Math.max(0, Math.min(1, (clientY - rect.top) / rect.height));
-    const next = { ...(settings?.pinOverrides || {}), [key]: { x, y } };
+    const el = mapSvgRef.current;
+    if (!el) return;
+    let x, y;
+    if (el.tagName && el.tagName.toLowerCase() === 'svg' && el.getScreenCTM) {
+      // SVGは preserveAspectRatio の余白があるため、要素の矩形で割ると保存値がずれる。
+      // viewBox のユーザー座標系へ変換してから、地図の基準サイズで正規化する。
+      const ctm = el.getScreenCTM();
+      if (!ctm) return;
+      const pt = el.createSVGPoint();
+      pt.x = clientX;
+      pt.y = clientY;
+      const p = pt.matrixTransform(ctm.inverse());
+      x = p.x / (Number(el.dataset.normW) || 1000);
+      y = p.y / (Number(el.dataset.normH) || 667);
+    } else {
+      // 画像地図：枠を画像と一致させてあるので矩形基準でよい
+      const rect = el.getBoundingClientRect();
+      x = (clientX - rect.left) / rect.width;
+      y = (clientY - rect.top) / rect.height;
+    }
+    const next = {
+      ...(settings?.pinOverrides || {}),
+      [key]: { x: Math.max(0, Math.min(1, x)), y: Math.max(0, Math.min(1, y)) },
+    };
     updateSettings({ pinOverrides: next });
   }, [settings?.pinOverrides, updateSettings]);
 
@@ -1633,6 +1707,8 @@ function MapView({ posts, addPost, updatePost, stores, tags, settings, updateSet
     window.addEventListener('mouseup', onUp);
   }, [mapWidthPct]);
   const [prefFilter, setPrefFilter] = useState('');     // 県フィルタ
+  const [subFilter, setSubFilter] = useState('');       // 区・サブ地域フィルタ（地図のピンから選択）
+  const [listTab, setListTab] = useState('all');         // 一覧タブ: all / new / featured
   const [tagFilter, setTagFilter] = useState('');       // タグフィルタ
   const [dateRange, setDateRange] = useState('all');    // 期間フィルタ: 'all'|'today'|'week'|'month'|'3months'|'year'
   const [photoOnly, setPhotoOnly] = useState(false);    // 写真ありのみ
@@ -1722,8 +1798,9 @@ function MapView({ posts, addPost, updatePost, stores, tags, settings, updateSet
     return `${finalX} ${finalY} ${finalW} ${finalH}`;
   }, [currentRegion, stores]);
 
-  // 表示する投稿
-  const visiblePosts = useMemo(() => {
+  // 地図に渡す投稿（subFilter は未適用）。
+  // ここで subFilter まで掛けると、選択中の区以外のピンの件数が全部0になってしまう。
+  const regionPosts = useMemo(() => {
     let list;
     if (currentRegion === '全国') {
       list = posts;
@@ -1746,6 +1823,33 @@ function MapView({ posts, addPost, updatePost, stores, tags, settings, updateSet
     }
     return list;
   }, [posts, currentRegion, prefFilter, tagFilter, photoOnly, dateRange]);
+
+  // 一覧に出す投稿（地図のピンで選んだ区・サブ地域まで適用）
+  const visiblePosts = useMemo(() => {
+    if (!subFilter) return regionPosts;
+    if (currentRegion === '東京23区') {
+      // TokyoMapView の subCounts と同じ判定にする（ずれると件数と一覧が食い違う）
+      return regionPosts.filter(p => (p.tokyoWard || (p.storeId === 'arakawa' ? '荒川区' : null)) === subFilter);
+    }
+    if (currentRegion === '荒川区') return regionPosts.filter(p => p.arakawaSubRegion === subFilter);
+    if (currentRegion === '愛知') return regionPosts.filter(p => p.aichiSubRegion === subFilter);
+    return regionPosts;
+  }, [regionPosts, currentRegion, subFilter]);
+
+  // 地域を切り替えたら区の選択は解除（残すと一覧が空になる）
+  useEffect(() => { setSubFilter(''); }, [currentRegion]);
+
+  // 一覧タブの適用。地図のピン件数には影響させない（地図は regionPosts のまま）
+  const NEW_LIMIT = 20;
+  const listPosts = useMemo(() => {
+    if (listTab === 'new') return visiblePosts.slice(0, NEW_LIMIT);   // posts は新しい順に並んでいる
+    if (listTab === 'featured') return visiblePosts.filter(p => p.featured);
+    return visiblePosts;
+  }, [visiblePosts, listTab]);
+
+  const listEmptyText = listTab === 'featured'
+    ? 'まだ「面白い投稿」が選ばれていません'
+    : 'まだ投稿がありません';
 
   // 現在の地域に含まれる県の一覧（フィルタ用）
   const prefsInView = useMemo(() => {
@@ -1791,27 +1895,73 @@ function MapView({ posts, addPost, updatePost, stores, tags, settings, updateSet
     return override ? { ...base, x: override.x, y: override.y } : base;
   }, [stores, settings?.pinOverrides]);
 
+  // お客様モードではピン調整を無効化（マウスドラッグ前提＋設定を書き換えるため）
+  const pinMode = allowPinEdit && isPinMode;
+
+  // 調整済みの全ピン座標をソースに焼き込める形で書き出す。
+  // pinOverrides は localStorage にしか残らないので、この出力を定数へ反映して全端末に効かせる。
+  const buildPinExport = useCallback(() => {
+    const ov = settings?.pinOverrides || {};
+    const round = (n) => Math.round(n * 10000) / 10000;
+    const merge = (defs, prefix) => Object.fromEntries(
+      Object.entries(defs).map(([k, p]) => {
+        const o = ov[prefix ? `${prefix}:${k}` : k];
+        return [k, { x: round(o?.x ?? p.x), y: round(o?.y ?? p.y) }];
+      })
+    );
+    const prefDefs = Object.fromEntries(Object.entries(PREFS).filter(([k]) => k !== 'overseas'));
+    const out = {
+      PREFS: merge(prefDefs, ''),
+      ARAKAWA_PIN_POS: merge(ARAKAWA_PIN_POS, 'arakawa'),
+      AICHI_PIN_POS: merge(AICHI_PIN_POS, 'aichi'),
+      TOKYO_WARD_PIN_POS: merge(TOKYO_WARD_PIN_POS, 'tokyo23'),
+      stores: {},
+    };
+    Object.values(stores).forEach(st => {
+      const o = ov[`store:${st.id}`];
+      if (o) out.stores[st.id] = { x: round(o.x), y: round(o.y) };
+    });
+    return JSON.stringify(out);
+  }, [settings?.pinOverrides, stores]);
+
+  const copyPinExport = useCallback(() => {
+    const text = buildPinExport();
+    const fallback = () => window.prompt('コピーできませんでした。下を全選択してコピーしてください', text);
+    if (!navigator.clipboard) return fallback();
+    navigator.clipboard.writeText(text).then(
+      () => alert('全ピンの座標をコピーしました！チャットに貼り付けてください'),
+      fallback
+    );
+  }, [buildPinExport]);
+
   if (showForm) {
     return <PostForm onSubmit={(p) => { addPost(p); }} onCancel={() => setShowForm(false)} stores={stores} tags={tags}/>;
   }
 
   return (
-    <div style={s.monitorScreen}>
-      <header style={s.monitorHeader}>
-        <div style={{ display: 'flex', alignItems: 'center', gap: 14, flexShrink: 0 }}>
-          <div style={s.monitorKanji}>街中</div>
-          <div style={s.monitorTitle}>MAP</div>
+    <div className="mn-screen" style={{
+      ...s.monitorScreen,
+      ...(embedded ? { height: '100%', width: '100%' } : {}),
+      // スマホは画面固定をやめてページごとスクロールさせる（マップは一番上に戻れば見える）
+      ...(mobile ? { padding: '10px 12px', width: '100%', height: 'auto', overflow: 'visible' } : {}),
+    }}>
+      <header style={{ ...s.monitorHeader, ...(mobile ? { flexWrap: 'nowrap', gap: 8, marginBottom: 4 } : {}) }}>
+        <div style={{ display: 'flex', alignItems: 'center', gap: mobile ? 6 : 14, flexShrink: 0 }}>
+          <div style={mobile ? { ...s.monitorKanji, fontSize: 16, padding: '4px 8px', letterSpacing: 2 } : s.monitorKanji}>街中</div>
+          <div style={mobile ? { ...s.monitorTitle, fontSize: 13, letterSpacing: 2 } : s.monitorTitle}>MAP</div>
         </div>
 
         {activeRegions.length > 0 && (
-          <div style={s.regionTabsBar}>
+          <div style={mobile
+            ? { ...s.regionTabsBar, flexWrap: 'nowrap', overflowX: 'auto', justifyContent: 'flex-start', WebkitOverflowScrolling: 'touch' }
+            : s.regionTabsBar}>
             {activeRegions.map((r) => {
               const isActive = r === currentRegion;
               const isStore = Object.values(stores).some(st => st.name === r);
               const isAll = r === '全国';
               return (
                 <button key={r} onClick={() => { setSlideshow(false); setPinnedRegion(r); const idx = activeRegions.indexOf(r); if (idx !== -1) setRegionIdx(idx); }}
-                  style={{ ...s.regionTab, ...(isActive ? { background: REGION_COLOR(r), color: '#fff', boxShadow: '0 4px 12px rgba(0,0,0,0.15)', fontWeight: 700 } : {}) }}>
+                  style={{ ...s.regionTab, ...(mobile ? { flexShrink: 0 } : {}), ...(isActive ? { background: REGION_COLOR(r), color: '#fff', boxShadow: '0 4px 12px rgba(0,0,0,0.15)', fontWeight: 700 } : {}) }}>
                   {isAll ? '🌐 ' : isStore ? '🏠 ' : ''}{r}
                 </button>
               );
@@ -1823,24 +1973,28 @@ function MapView({ posts, addPost, updatePost, stores, tags, settings, updateSet
 
       <AccentLine style={{ marginBottom: 12 }} />
 
-      <main style={{ ...s.mapBoard, display: 'flex', gap: 0 }} ref={containerRef}>
-        <div style={{ ...s.mapBox, flex: `0 0 ${mapWidthPct}%`, minWidth: 0 }}>
+      <main style={{ ...s.mapBoard, display: 'flex', gap: mobile ? 8 : 0, ...(mobile ? { flexDirection: 'column', flex: 'none', minHeight: 0 } : { touchAction: 'none' }) }} ref={containerRef}>
+        {/* スマホは地図画像とほぼ同じ 3:2 にして上下の余白を出さない */}
+        <div style={{ ...s.mapBox, ...(mobile ? { flex: 'none', width: '100%', aspectRatio: '3 / 2' } : { flex: `0 0 ${mapWidthPct}%`, touchAction: 'none' }), minWidth: 0 }}>
           {currentRegion === '海外' ? (
             <WorldMapView pins={pins} currentRegion={currentRegion} posts={posts}
-              isPinMode={isPinMode} onPinDrag={handlePinDrag}
+              isPinMode={pinMode} onPinDrag={handlePinDrag}
               svgRef={mapSvgRef} pinOverrides={settings?.pinOverrides}/>
           ) : currentRegion === '愛知' ? (
-            <AichiMapView posts={visiblePosts}
-              isPinMode={isPinMode} onPinDrag={handlePinDrag}
-              containerRef={mapSvgRef} pinOverrides={settings?.pinOverrides}/>
+            <AichiMapView posts={regionPosts}
+              isPinMode={pinMode} onPinDrag={handlePinDrag}
+              containerRef={mapSvgRef} pinOverrides={settings?.pinOverrides}
+              selected={subFilter} onSelect={setSubFilter}/>
           ) : currentRegion === '荒川区' ? (
-            <ArakawaMapView posts={visiblePosts}
-              isPinMode={isPinMode} onPinDrag={handlePinDrag}
-              containerRef={mapSvgRef} pinOverrides={settings?.pinOverrides}/>
+            <ArakawaMapView posts={regionPosts}
+              isPinMode={pinMode} onPinDrag={handlePinDrag}
+              containerRef={mapSvgRef} pinOverrides={settings?.pinOverrides}
+              selected={subFilter} onSelect={setSubFilter}/>
           ) : currentRegion === '東京23区' ? (
-            <TokyoMapView posts={visiblePosts}
-              isPinMode={isPinMode} onPinDrag={handlePinDrag}
-              containerRef={mapSvgRef} pinOverrides={settings?.pinOverrides}/>
+            <TokyoMapView posts={regionPosts}
+              isPinMode={pinMode} onPinDrag={handlePinDrag}
+              containerRef={mapSvgRef} pinOverrides={settings?.pinOverrides}
+              selected={subFilter} onSelect={setSubFilter}/>
           ) : (
             <JapanMapView
               pins={pins}
@@ -1848,14 +2002,16 @@ function MapView({ posts, addPost, updatePost, stores, tags, settings, updateSet
               viewBox={viewBox}
               getPinInfo={getPinInfo}
               stores={stores}
-              isPinMode={isPinMode}
+              isPinMode={pinMode}
               onPinDrag={handlePinDrag}
               svgRef={mapSvgRef}
+              selectedKey={prefFilter}
+              onSelect={setPrefFilter}
             />
           )}
 
           {/* ピン調整モード：一括オフセットUI */}
-          {isPinMode && currentRegion !== '愛知' && currentRegion !== '荒川区' && currentRegion !== '東京23区' && (
+          {allowPinEdit && isPinMode && (
             <div style={{ position: 'absolute', ...(panelPos.y !== null ? { top: panelPos.y, left: panelPos.x } : { bottom: 16, left: panelPos.x }), zIndex: 20, background: 'rgba(255,255,255,0.95)', borderRadius: 10, padding: '10px 12px', boxShadow: '0 4px 16px rgba(0,0,0,0.15)', display: 'flex', flexDirection: 'column', gap: 6 }}>
               <div
                 onMouseDown={(e) => {
@@ -1873,42 +2029,30 @@ function MapView({ posts, addPost, updatePost, stores, tags, settings, updateSet
                   window.addEventListener('mouseup', up);
                 }}
                 style={{ fontFamily: FONT_HAND, fontSize: '0.6875rem', color: C.inkSub, marginBottom: 2, fontWeight: 700, cursor: 'grab', userSelect: 'none' }}>
-                ☰ 全ピン一括移動
+                ☰ ピン調整
               </div>
-              <div style={{ display: 'flex', gap: 4, justifyContent: 'center' }}>
-                <button onClick={() => shiftAllPins(0, -0.01)} style={s.rowBtn}>↑</button>
-              </div>
-              <div style={{ display: 'flex', gap: 4 }}>
-                <button onClick={() => shiftAllPins(-0.01, 0)} style={s.rowBtn}>←</button>
-                <button onClick={() => shiftAllPins(0, 0.01)} style={s.rowBtn}>↓</button>
-                <button onClick={() => shiftAllPins(0.01, 0)} style={s.rowBtn}>→</button>
-              </div>
+              {/* 一括移動は都道府県ピン（全国・地方マップ）だけが対象 */}
+              {currentRegion !== '愛知' && currentRegion !== '荒川区' && currentRegion !== '東京23区' && (
+                <>
+                  <div style={{ display: 'flex', gap: 4, justifyContent: 'center' }}>
+                    <button onClick={() => shiftAllPins(0, -0.01)} style={s.rowBtn}>↑</button>
+                  </div>
+                  <div style={{ display: 'flex', gap: 4 }}>
+                    <button onClick={() => shiftAllPins(-0.01, 0)} style={s.rowBtn}>←</button>
+                    <button onClick={() => shiftAllPins(0, 0.01)} style={s.rowBtn}>↓</button>
+                    <button onClick={() => shiftAllPins(0.01, 0)} style={s.rowBtn}>→</button>
+                  </div>
+                  <button
+                    onClick={commitAllPins}
+                    style={{ ...s.rowBtn, background: C.green, color: '#fff', borderColor: C.green, fontSize: '0.625rem', marginTop: 4, fontWeight: 700 }}>
+                    ✓ 現在位置を初期値として確定
+                  </button>
+                </>
+              )}
               <button
-                onClick={commitAllPins}
-                style={{ ...s.rowBtn, background: C.green, color: '#fff', borderColor: C.green, fontSize: '0.625rem', marginTop: 4, fontWeight: 700 }}>
-                ✓ 現在位置を初期値として確定
-              </button>
-              <button
-                onClick={() => {
-                  const overrides = settings?.pinOverrides || {};
-                  const out = {};
-                  // 都道府県
-                  Object.keys(PREFS).forEach(k => {
-                    if (k === 'overseas') return;
-                    const p = PREFS[k];
-                    const ov = overrides[k];
-                    out[k] = { x: ov?.x ?? p.x, y: ov?.y ?? p.y };
-                  });
-                  // お店（store:xxx キー）
-                  Object.values(stores).forEach(st => {
-                    const ov = overrides[`store:${st.id}`];
-                    if (ov) out[`store:${st.id}`] = { x: ov.x, y: ov.y };
-                  });
-                  const text = JSON.stringify(out);
-                  navigator.clipboard.writeText(text).then(() => alert('コピーしました！チャットに貼り付けてください'));
-                }}
+                onClick={copyPinExport}
                 style={{ ...s.rowBtn, fontSize: '0.625rem', marginTop: 2 }}>
-                📋 座標をコピー（開発者用）
+                📋 全ピンの座標をコピー（開発者用）
               </button>
               <button onClick={resetAllPins} style={{ ...s.rowBtn, color: C.pink, borderColor: C.pink, fontSize: '0.625rem' }}>リセット</button>
             </div>
@@ -1916,54 +2060,77 @@ function MapView({ posts, addPost, updatePost, stores, tags, settings, updateSet
 
           {/* スライドショー／固定ボタン（右上） */}
           {activeRegions.length > 0 && (
-            <div style={{ ...s.modeToggle, position: 'absolute', top: 16, right: 16, zIndex: 10 }}>
-              <button onClick={() => setIsPinMode(v => !v)}
-                style={{ ...s.modeBtn, ...(isPinMode ? { background: C.yellow, color: C.ink } : {}) }}>
-                📍 ピン調整
+            <div style={{ ...s.modeToggle, position: 'absolute', top: mobile ? 8 : 16, right: mobile ? 8 : 16, zIndex: 10 }}>
+              {allowPinEdit && (
+                <button onClick={() => setIsPinMode(v => !v)}
+                  style={{ ...s.modeBtn, ...(isPinMode ? { background: C.yellow, color: C.ink } : {}) }}>
+                  📍 ピン調整
+                </button>
+              )}
+              <button onClick={() => setSlideshow(true)} style={{ ...s.modeBtn, ...(mobile ? s.modeBtnCompact : {}), ...(slideshow ? s.modeBtnActive : {}) }}>
+                {mobile ? '▶' : '▶ スライドショー'}
               </button>
-              <button onClick={() => setSlideshow(true)} style={{ ...s.modeBtn, ...(slideshow ? s.modeBtnActive : {}) }}>
-                ▶ スライドショー
-              </button>
-              <button onClick={() => { setSlideshow(false); setPinnedRegion(currentRegion); }} style={{ ...s.modeBtn, ...(!slideshow ? s.modeBtnActive : {}) }}>
-                ⏸ 固定
+              <button onClick={() => { setSlideshow(false); setPinnedRegion(currentRegion); }} style={{ ...s.modeBtn, ...(mobile ? s.modeBtnCompact : {}), ...(!slideshow ? s.modeBtnActive : {}) }}>
+                {mobile ? '⏸' : '⏸ 固定'}
               </button>
             </div>
           )}
 
           {/* 場所表示（右下） */}
           {currentRegion && (
-            <div style={{ ...s.regionOverlay, background: regionColor }}>
+            <div style={{ ...s.regionOverlay, background: regionColor, pointerEvents: 'none', ...(mobile ? { bottom: 8, right: 8, padding: '6px 10px' } : {}) }}>
               <div style={s.regionOverlayLabel}>
                 {currentRegion === '全国' ? 'ALL · 🌐' : currentRegion === '海外' ? 'OVERSEAS · 🌍' : Object.values(stores).some(st => st.name === currentRegion) ? 'HOME · 🏠' : 'NOW SHOWING'}
               </div>
-              <div style={s.regionOverlayName}>
+              <div style={mobile ? { ...s.regionOverlayName, fontSize: '1.125rem', letterSpacing: 2 } : s.regionOverlayName}>
                 {currentRegion}{(['全国', '海外', '東京23区'].includes(currentRegion) || Object.values(stores).some(st => st.name === currentRegion)) ? '' : '地方'}
               </div>
-              <div style={s.regionOverlayCount}>{visiblePosts.length} 件の投稿</div>
+              <div style={s.regionOverlayCount}>
+                {postsLoading && posts.length === 0 ? '読み込み中…' : `${listPosts.length} 件の投稿`}
+              </div>
             </div>
           )}
         </div>
 
-        {/* ドラッグハンドル */}
-        <div
-          onMouseDown={onDragStart}
-          style={{ width: 6, flexShrink: 0, cursor: 'col-resize', background: 'transparent', position: 'relative', zIndex: 5 }}
-          title="ドラッグで幅を調整"
-        >
-          <div style={{ position: 'absolute', top: '50%', left: '50%', transform: 'translate(-50%,-50%)', width: 4, height: 40, borderRadius: 2, background: C.line, opacity: 0.5 }}/>
-        </div>
+        {/* ドラッグハンドル（マウス操作前提のためスマホでは非表示） */}
+        {!mobile && (
+          <div
+            onMouseDown={onDragStart}
+            style={{ width: 6, flexShrink: 0, cursor: 'col-resize', background: 'transparent', position: 'relative', zIndex: 5 }}
+            title="ドラッグで幅を調整"
+          >
+            <div style={{ position: 'absolute', top: '50%', left: '50%', transform: 'translate(-50%,-50%)', width: 4, height: 40, borderRadius: 2, background: C.line, opacity: 0.5 }}/>
+          </div>
+        )}
 
-        <aside style={{ ...s.focusPanel, flex: 1, minWidth: 0 }}>
+        <aside style={{ ...s.focusPanel, minWidth: 0, ...(mobile ? { flex: 'none', overflow: 'visible' } : { flex: 1, minHeight: 0 }) }}>
+          {/* 一覧タブ：すべて / 新着 / 面白い */}
+          <div style={s.listTabs}>
+            {[
+              { key: 'all', label: 'すべて' },
+              { key: 'new', label: '🆕 新着' },
+              { key: 'featured', label: '⭐ 面白い' },
+            ].map(t => (
+              <button key={t.key} onClick={() => setListTab(t.key)}
+                style={{ ...s.listTab, ...(listTab === t.key ? s.listTabActive : {}) }}>
+                {t.label}
+              </button>
+            ))}
+          </div>
+
           {/* フィルタ・ソート */}
           <FilterPanel
             prefFilter={prefFilter} setPrefFilter={setPrefFilter}
+            subFilter={subFilter} setSubFilter={setSubFilter}
             tagFilter={tagFilter} setTagFilter={setTagFilter}
             dateRange={dateRange} setDateRange={setDateRange}
             photoOnly={photoOnly} setPhotoOnly={setPhotoOnly}
             prefsInView={prefsInView} tags={tags}
           />
 
-          <ScrollingList posts={visiblePosts} regionColor={regionColor} onPostClick={setDetailPost} tagMap={tagMap}/>
+          <ScrollingList posts={listPosts} regionColor={regionColor} onPostClick={setDetailPost} tagMap={tagMap} staticFlow={mobile}
+            loading={postsLoading && posts.length === 0} loadError={postsLoadError && posts.length === 0}
+            emptyText={listEmptyText}/>
         </aside>
       </main>
 
@@ -1984,23 +2151,28 @@ function MapView({ posts, addPost, updatePost, stores, tags, settings, updateSet
           <span style={s.liveDot}/>
           <span>LIVE 自動更新</span>
         </div>
-        <div style={{ fontFamily: FONT_HAND, fontSize: '0.8125rem', color: C.inkSub, letterSpacing: 1 }}>
-          タブレットでも街中マップ見られますのでお声がけください～
-        </div>
+        {!mobile && (
+          <div style={{ fontFamily: FONT_HAND, fontSize: '0.8125rem', color: C.inkSub, letterSpacing: 1 }}>
+            タブレットでも街中マップ見られますのでお声がけください～
+          </div>
+        )}
         <div style={{ fontFamily: FONT_HAND, color: C.green, letterSpacing: 2 }}>
           QRを読み込んで地図に貼ろう
         </div>
       </footer>
 
-      <button onClick={() => setShowForm(true)} style={s.fab}>
-        <span style={{ fontSize: '1.375rem', lineHeight: 1 }}>＋</span>
-        <span>投稿する</span>
-      </button>
+      {/* お客様ページでは「📮 投稿する」タブがあるのでFABは出さない */}
+      {!embedded && (
+        <button onClick={() => setShowForm(true)} style={s.fab}>
+          <span style={{ fontSize: '1.375rem', lineHeight: 1 }}>＋</span>
+          <span>投稿する</span>
+        </button>
+      )}
     </div>
   );
 }
 
-function JapanMapView({ pins, currentRegion, viewBox, getPinInfo, stores, isPinMode, onPinDrag, svgRef }) {
+function JapanMapView({ pins, currentRegion, viewBox, getPinInfo, stores, isPinMode, onPinDrag, svgRef, selectedKey, onSelect }) {
   const isAll = currentRegion === '全国';
   const isStore = Object.values(stores).some(st => st.name === currentRegion);
   const isRegion = !isAll && !isStore && REGION_BOUNDS[currentRegion] && currentRegion !== '海外';
@@ -2052,7 +2224,7 @@ function JapanMapView({ pins, currentRegion, viewBox, getPinInfo, stores, isPinM
   const pinScale = Math.min(1, vbW / VW);   // ズームするほど小さくなる（最大1.0）
 
   return (
-    <svg ref={svgRef} viewBox={vb} style={{ ...s.mapSvg, cursor: isPinMode ? 'crosshair' : undefined }} preserveAspectRatio="xMidYMid meet">
+    <svg ref={svgRef} viewBox={vb} data-norm-w={VW} data-norm-h={VH} style={{ ...s.mapSvg, cursor: isPinMode ? 'crosshair' : undefined }} preserveAspectRatio="xMidYMid meet">
       <defs>
         <filter id="shadow" x="-50%" y="-50%" width="200%" height="200%">
           <feGaussianBlur in="SourceAlpha" stdDeviation="2"/>
@@ -2108,17 +2280,24 @@ function JapanMapView({ pins, currentRegion, viewBox, getPinInfo, stores, isPinM
             window.addEventListener('mousemove', move);
             window.addEventListener('mouseup', up);
           } : undefined;
+          // 店舗ピンのキーは store:<id> だが、prefFilter は素のidと突き合わせている
+          const filterKey = key.startsWith('store:') ? key.slice(6) : key;
+          const isSelected = !!selectedKey && selectedKey === filterKey;
+          const canSelect = !isPinMode && typeof onSelect === 'function';
           return (
             <g key={key} filter="url(#shadow)" opacity={isCurrent ? 1 : 0.25}
-               style={{ cursor: isPinMode ? 'grab' : undefined }}
-               onMouseDown={handleDragStart}>
+               style={{ cursor: isPinMode ? 'grab' : (canSelect ? 'pointer' : undefined) }}
+               onMouseDown={handleDragStart}
+               onClick={canSelect ? () => onSelect(isSelected ? '' : filterKey) : undefined}>
+              {/* 指で押しやすいよう、見た目より大きい透明な当たり判定を重ねる */}
+              {canSelect && <circle cx={px} cy={py} r={radius + 14 * pinScale} fill="transparent"/>}
               {isCurrent && !isPinMode && (
                 <circle cx={px} cy={py} r={radius + 6 * pinScale} fill="none" stroke={color} strokeWidth="2" opacity="0.7">
                   <animate attributeName="r" from={radius} to={radius + 24 * pinScale} dur="1.8s" repeatCount="indefinite"/>
                   <animate attributeName="opacity" from="0.8" to="0" dur="1.8s" repeatCount="indefinite"/>
                 </circle>
               )}
-              <circle cx={px} cy={py} r={isPinMode ? radius + 4 * pinScale : radius} fill={isPinMode ? C.yellow : color} stroke={C.bgWhite} strokeWidth={isCurrent ? 3 : 2}/>
+              <circle cx={px} cy={py} r={isPinMode ? radius + 4 * pinScale : (isSelected ? radius + 3 * pinScale : radius)} fill={isPinMode ? C.yellow : color} stroke={isSelected ? C.ink : C.bgWhite} strokeWidth={isSelected ? 4 : (isCurrent ? 3 : 2)}/>
               {isPinMode && <text x={px} y={py + fontSize * 0.35} fontSize={fontSize} fontWeight="700" fill={C.ink} textAnchor="middle" style={{ fontFamily: FONT_DISPLAY }}>✥</text>}
               <text x={px} y={py - radius - 4 * pinScale} fontSize={labelFontSize} fill={isCurrent ? C.ink : C.inkLight} textAnchor="middle" fontWeight={isCurrent ? 700 : 500} style={{ fontFamily: FONT_HAND }}>
                 {info.isStore ? '🏠 ' : ''}{info.name}
@@ -2144,7 +2323,7 @@ const AICHI_PIN_POS = {
   '東三河':  { x: 0.82, y: 0.42 },
 };
 
-function AichiMapView({ posts, isPinMode, onPinDrag, containerRef, pinOverrides }) {
+function AichiMapView({ posts, isPinMode, onPinDrag, containerRef, pinOverrides, selected, onSelect }) {
   const subCounts = useMemo(() => {
     const map = {};
     (posts || []).forEach(p => {
@@ -2154,19 +2333,15 @@ function AichiMapView({ posts, isPinMode, onPinDrag, containerRef, pinOverrides 
   }, [posts]);
 
   return (
-    <div ref={containerRef} style={{ width: '100%', height: '100%', position: 'relative', background: '#f8f7f4', overflow: 'hidden', display: 'flex', alignItems: 'center', justifyContent: 'center', cursor: isPinMode ? 'crosshair' : undefined }}>
-      <img
-        src="/aichi-map.png"
-        alt="愛知県マップ"
-        style={{ width: '100%', height: '100%', objectFit: 'contain', display: 'block', opacity: isPinMode ? 0.6 : 0.85 }}
-        onError={e => { e.target.style.display = 'none'; }}
-      />
+    <ImageMapFrame src="/aichi-map.png" alt="愛知県マップ" ratio="1536 / 1024" isPinMode={isPinMode} frameRef={containerRef}>
       {Object.entries(AICHI_PIN_POS).map(([name, pos]) => {
         const overrideKey = `aichi:${name}`;
         const ov = pinOverrides?.[overrideKey];
         const px = ov ? ov.x : pos.x;
         const py = ov ? ov.y : pos.y;
         const count = subCounts[name] || 0;
+        const isSelected = selected === name;
+        const canSelect = !isPinMode && count > 0 && typeof onSelect === 'function';
 
         const handleMouseDown = isPinMode ? (e) => {
           e.preventDefault();
@@ -2179,15 +2354,17 @@ function AichiMapView({ posts, isPinMode, onPinDrag, containerRef, pinOverrides 
         return (
           <div key={name}
             onMouseDown={handleMouseDown}
+            onClick={canSelect ? () => onSelect(isSelected ? '' : name) : undefined}
             style={{
               position: 'absolute',
               left: `${px * 100}%`,
               top: `${py * 100}%`,
               transform: 'translate(-50%, -50%)',
               display: 'flex', flexDirection: 'column', alignItems: 'center', gap: 3,
-              pointerEvents: isPinMode ? 'auto' : 'none',
-              cursor: isPinMode ? 'grab' : undefined,
-              zIndex: isPinMode ? 10 : undefined
+              // 投稿があるピンは通常モードでもクリックできる（その地域だけに絞り込む）
+              pointerEvents: (isPinMode || canSelect) ? 'auto' : 'none',
+              cursor: isPinMode ? 'grab' : (canSelect ? 'pointer' : undefined),
+              zIndex: isPinMode ? 10 : (isSelected ? 9 : undefined)
             }}>
             {isPinMode ? (
               <div style={{
@@ -2207,7 +2384,7 @@ function AichiMapView({ posts, isPinMode, onPinDrag, containerRef, pinOverrides 
               }}>{count}</div>
             ) : null}
             <div style={{
-              background: isPinMode ? 'rgba(220,180,0,0.92)' : (count > 0 ? 'rgba(232,76,61,0.92)' : 'rgba(60,60,60,0.55)'),
+              background: isPinMode ? 'rgba(220,180,0,0.92)' : (isSelected ? C.ink : (count > 0 ? 'rgba(232,76,61,0.92)' : 'rgba(60,60,60,0.55)')),
               color: isPinMode ? C.ink : '#fff',
               fontFamily: FONT_HAND, fontSize: '0.6875rem', fontWeight: count > 0 ? 700 : 400,
               padding: '2px 8px', borderRadius: 10,
@@ -2223,7 +2400,7 @@ function AichiMapView({ posts, isPinMode, onPinDrag, containerRef, pinOverrides 
           愛知の投稿がまだありません
         </div>
       )}
-    </div>
+    </ImageMapFrame>
   );
 }
 
@@ -2256,7 +2433,7 @@ const TOKYO_WARD_PIN_POS = {
   '江戸川区': { x: 0.83, y: 0.50 },
 };
 
-function TokyoMapView({ posts, isPinMode, onPinDrag, containerRef, pinOverrides }) {
+function TokyoMapView({ posts, isPinMode, onPinDrag, containerRef, pinOverrides, selected, onSelect }) {
   const subCounts = useMemo(() => {
     const map = {};
     (posts || []).forEach(p => {
@@ -2267,17 +2444,15 @@ function TokyoMapView({ posts, isPinMode, onPinDrag, containerRef, pinOverrides 
   }, [posts]);
 
   return (
-    <div ref={containerRef} style={{ width: '100%', height: '100%', position: 'relative', background: '#f8f7f4', overflow: 'hidden', display: 'flex', alignItems: 'center', justifyContent: 'center', cursor: isPinMode ? 'crosshair' : undefined }}>
-      <img src="/23kumap.png" alt="東京23区マップ"
-        style={{ width: '100%', height: '100%', objectFit: 'contain', display: 'block', opacity: isPinMode ? 0.6 : 0.85 }}
-        onError={e => { e.target.style.display = 'none'; }}
-      />
+    <ImageMapFrame src="/23kumap.png" alt="東京23区マップ" ratio="1536 / 1024" isPinMode={isPinMode} frameRef={containerRef}>
       {Object.entries(TOKYO_WARD_PIN_POS).map(([name, pos]) => {
         const overrideKey = `tokyo23:${name}`;
         const ov = pinOverrides?.[overrideKey];
         const px = ov ? ov.x : pos.x;
         const py = ov ? ov.y : pos.y;
         const count = subCounts[name] || 0;
+        const isSelected = selected === name;
+        const canSelect = !isPinMode && count > 0 && typeof onSelect === 'function';
 
         const handleMouseDown = isPinMode ? (e) => {
           e.preventDefault();
@@ -2288,14 +2463,16 @@ function TokyoMapView({ posts, isPinMode, onPinDrag, containerRef, pinOverrides 
         } : undefined;
 
         return (
-          <div key={name} onMouseDown={handleMouseDown} style={{
+          <div key={name} onMouseDown={handleMouseDown}
+            onClick={canSelect ? () => onSelect(isSelected ? '' : name) : undefined} style={{
             position: 'absolute',
             left: `${px * 100}%`, top: `${py * 100}%`,
             transform: 'translate(-50%, -50%)',
             display: 'flex', flexDirection: 'column', alignItems: 'center', gap: 2,
-            pointerEvents: isPinMode ? 'auto' : 'none',
-            cursor: isPinMode ? 'grab' : undefined,
-            zIndex: isPinMode ? 10 : undefined
+            // 投稿があるピンは通常モードでもクリックできる（その地域だけに絞り込む）
+            pointerEvents: (isPinMode || canSelect) ? 'auto' : 'none',
+            cursor: isPinMode ? 'grab' : (canSelect ? 'pointer' : undefined),
+            zIndex: isPinMode ? 10 : (isSelected ? 9 : undefined)
           }}>
             {isPinMode ? (
               <div style={{ background: C.yellow, color: C.ink, fontFamily: FONT_DISPLAY, fontSize: '1rem', fontWeight: 700, width: 28, height: 28, borderRadius: '50%', display: 'flex', alignItems: 'center', justifyContent: 'center', boxShadow: '0 2px 8px rgba(0,0,0,0.25)', border: '2px solid #fff' }}>✥</div>
@@ -2303,7 +2480,7 @@ function TokyoMapView({ posts, isPinMode, onPinDrag, containerRef, pinOverrides 
               <div style={{ background: C.pink, color: '#fff', fontFamily: FONT_DISPLAY, fontSize: '0.75rem', fontWeight: 700, width: 28, height: 28, borderRadius: '50%', display: 'flex', alignItems: 'center', justifyContent: 'center', boxShadow: '0 2px 8px rgba(0,0,0,0.25)', border: '2px solid #fff' }}>♥</div>
             ) : null}
             <div style={{
-              background: isPinMode ? 'rgba(220,180,0,0.92)' : (count > 0 ? 'rgba(231,76,109,0.92)' : 'rgba(60,60,60,0.55)'),
+              background: isPinMode ? 'rgba(220,180,0,0.92)' : (isSelected ? C.ink : (count > 0 ? 'rgba(231,76,109,0.92)' : 'rgba(60,60,60,0.55)')),
               color: isPinMode ? C.ink : '#fff',
               fontFamily: FONT_HAND, fontSize: '0.5625rem', fontWeight: count > 0 ? 700 : 400,
               padding: '1px 6px', borderRadius: 8, whiteSpace: 'nowrap'
@@ -2311,7 +2488,7 @@ function TokyoMapView({ posts, isPinMode, onPinDrag, containerRef, pinOverrides 
           </div>
         );
       })}
-    </div>
+    </ImageMapFrame>
   );
 }
 
@@ -2328,7 +2505,27 @@ const ARAKAWA_PIN_POS = {
   '南千住':   { x: 0.74, y: 0.65 },
 };
 
-function ArakawaMapView({ posts, isPinMode, onPinDrag, containerRef, pinOverrides }) {
+// 画像地図の共通枠。
+// 以前は <img objectFit:contain> をコンテナいっぱいに置き、ピンをコンテナ基準の％で
+// 配置していたため、コンテナの縦横比が画像と違うとレターボックスの余白分だけピンがずれた。
+// ここで画像と同じ縦横比の内枠を作り、その内枠を基準にピンを置くことでどの画面幅でも一致する。
+function ImageMapFrame({ src, alt, ratio, isPinMode, frameRef, children }) {
+  return (
+    <div style={{ width: '100%', height: '100%', position: 'relative', background: '#f8f7f4', overflow: 'hidden', display: 'flex', alignItems: 'center', justifyContent: 'center', cursor: isPinMode ? 'crosshair' : undefined }}>
+      <div ref={frameRef} style={{ position: 'relative', aspectRatio: ratio, width: '100%', maxWidth: '100%', maxHeight: '100%' }}>
+        <img
+          src={src}
+          alt={alt}
+          style={{ width: '100%', height: '100%', display: 'block', opacity: isPinMode ? 0.6 : 0.85 }}
+          onError={e => { e.target.style.display = 'none'; }}
+        />
+        {children}
+      </div>
+    </div>
+  );
+}
+
+function ArakawaMapView({ posts, isPinMode, onPinDrag, containerRef, pinOverrides, selected, onSelect }) {
   const subCounts = useMemo(() => {
     const map = {};
     (posts || []).forEach(p => {
@@ -2340,19 +2537,15 @@ function ArakawaMapView({ posts, isPinMode, onPinDrag, containerRef, pinOverride
   const pinColor = C.pink;
 
   return (
-    <div ref={containerRef} style={{ width: '100%', height: '100%', position: 'relative', background: '#f8f7f4', overflow: 'hidden', display: 'flex', alignItems: 'center', justifyContent: 'center', cursor: isPinMode ? 'crosshair' : undefined }}>
-      <img
-        src="/arakawa-map.png"
-        alt="荒川区マップ"
-        style={{ width: '100%', height: '100%', objectFit: 'contain', display: 'block', opacity: isPinMode ? 0.6 : 0.85 }}
-        onError={e => { e.target.style.display = 'none'; }}
-      />
+    <ImageMapFrame src="/arakawa-map.png" alt="荒川区マップ" ratio="1532 / 1026" isPinMode={isPinMode} frameRef={containerRef}>
       {Object.entries(ARAKAWA_PIN_POS).map(([name, pos]) => {
         const overrideKey = `arakawa:${name}`;
         const ov = pinOverrides?.[overrideKey];
         const px = ov ? ov.x : pos.x;
         const py = ov ? ov.y : pos.y;
         const count = subCounts[name] || 0;
+        const isSelected = selected === name;
+        const canSelect = !isPinMode && count > 0 && typeof onSelect === 'function';
 
         const handleMouseDown = isPinMode ? (e) => {
           e.preventDefault();
@@ -2365,15 +2558,17 @@ function ArakawaMapView({ posts, isPinMode, onPinDrag, containerRef, pinOverride
         return (
           <div key={name}
             onMouseDown={handleMouseDown}
+            onClick={canSelect ? () => onSelect(isSelected ? '' : name) : undefined}
             style={{
               position: 'absolute',
               left: `${px * 100}%`,
               top: `${py * 100}%`,
               transform: 'translate(-50%, -50%)',
               display: 'flex', flexDirection: 'column', alignItems: 'center', gap: 3,
-              pointerEvents: isPinMode ? 'auto' : 'none',
-              cursor: isPinMode ? 'grab' : undefined,
-              zIndex: isPinMode ? 10 : undefined
+              // 投稿があるピンは通常モードでもクリックできる（その地域だけに絞り込む）
+              pointerEvents: (isPinMode || canSelect) ? 'auto' : 'none',
+              cursor: isPinMode ? 'grab' : (canSelect ? 'pointer' : undefined),
+              zIndex: isPinMode ? 10 : (isSelected ? 9 : undefined)
             }}>
             {isPinMode ? (
               <div style={{
@@ -2393,7 +2588,7 @@ function ArakawaMapView({ posts, isPinMode, onPinDrag, containerRef, pinOverride
               }}>{count}</div>
             ) : null}
             <div style={{
-              background: isPinMode ? 'rgba(220,180,0,0.92)' : (count > 0 ? 'rgba(231,76,109,0.92)' : 'rgba(60,60,60,0.55)'),
+              background: isPinMode ? 'rgba(220,180,0,0.92)' : (isSelected ? C.ink : (count > 0 ? 'rgba(231,76,109,0.92)' : 'rgba(60,60,60,0.55)')),
               color: isPinMode ? C.ink : '#fff',
               fontFamily: FONT_HAND, fontSize: '0.6875rem', fontWeight: count > 0 ? 700 : 400,
               padding: '2px 8px', borderRadius: 10,
@@ -2409,7 +2604,7 @@ function ArakawaMapView({ posts, isPinMode, onPinDrag, containerRef, pinOverride
           荒川区の投稿がまだありません
         </div>
       )}
-    </div>
+    </ImageMapFrame>
   );
 }
 
@@ -2464,7 +2659,7 @@ function WorldMapView({ pins, posts, isPinMode, onPinDrag, svgRef, pinOverrides 
   } : null;
 
   return (
-    <svg ref={svgRef} viewBox="0 0 1000 600" style={{ ...s.mapSvg, cursor: isPinMode ? 'crosshair' : undefined }} preserveAspectRatio="xMidYMid meet">
+    <svg ref={svgRef} viewBox="0 0 1000 600" data-norm-w={1000} data-norm-h={600} style={{ ...s.mapSvg, cursor: isPinMode ? 'crosshair' : undefined }} preserveAspectRatio="xMidYMid meet">
       <defs>
         <filter id="worldShadow" x="-50%" y="-50%" width="200%" height="200%">
           <feGaussianBlur in="SourceAlpha" stdDeviation="2"/>
@@ -2606,14 +2801,14 @@ function MiniMap({ currentRegion, pins, getPinInfo }) {
 // =====================================
 // フィルタパネル（折りたたみ式コンパクト）
 // =====================================
-function FilterPanel({ prefFilter, setPrefFilter, tagFilter, setTagFilter, dateRange, setDateRange, photoOnly, setPhotoOnly, prefsInView, tags }) {
+function FilterPanel({ prefFilter, setPrefFilter, subFilter, setSubFilter, tagFilter, setTagFilter, dateRange, setDateRange, photoOnly, setPhotoOnly, prefsInView, tags }) {
   const [open, setOpen] = useState(false);
 
   // アクティブ件数
-  const activeCount = [prefFilter, tagFilter, dateRange !== 'all', photoOnly].filter(Boolean).length;
+  const activeCount = [prefFilter, subFilter, tagFilter, dateRange !== 'all', photoOnly].filter(Boolean).length;
   const dateLabels = { all: '全期間', today: '24h', week: '1週間', month: '1ヶ月', '3months': '3ヶ月', year: '1年' };
 
-  const clearAll = () => { setPrefFilter(''); setTagFilter(''); setDateRange('all'); setPhotoOnly(false); };
+  const clearAll = () => { setPrefFilter(''); setSubFilter?.(''); setTagFilter(''); setDateRange('all'); setPhotoOnly(false); };
 
   return (
     <div style={s.filterBar}>
@@ -2634,6 +2829,7 @@ function FilterPanel({ prefFilter, setPrefFilter, tagFilter, setTagFilter, dateR
       {!open && activeCount > 0 && (
         <div style={s.filterChipRow}>
           {prefFilter && <span style={s.filterActiveChip}>📍 {prefsInView.find(([k]) => k === prefFilter)?.[1] || prefFilter}</span>}
+          {subFilter && <span style={s.filterActiveChip}>📍 {subFilter}</span>}
           {dateRange !== 'all' && <span style={s.filterActiveChip}>📅 {dateLabels[dateRange]}</span>}
           {photoOnly && <span style={s.filterActiveChip}>📷 写真あり</span>}
           {tagFilter && (() => {
@@ -2887,16 +3083,57 @@ function PostDetailModal({ post, updatePost, tagMap, onClose }) {
 }
 
 // translateYで動かす方式（scrollTopより確実に動く）
-function ScrollingList({ posts, regionColor, onPostClick, tagMap, noAutoScroll = false }) {
+function LoadingNote({ error = false }) {
+  return (
+    <div style={{ textAlign: 'center', padding: 40, fontFamily: FONT_HAND, color: C.inkSub }}>
+      {error ? (
+        <>
+          <div style={{ fontSize: '1.5rem', marginBottom: 8 }}>⚠️</div>
+          <div style={{ fontSize: '0.9375rem', fontWeight: 700, color: C.ink }}>投稿を読み込めませんでした</div>
+          <div style={{ fontSize: '0.8125rem', marginTop: 4 }}>通信環境を確認して、画面を更新してください</div>
+        </>
+      ) : (
+        <>
+          <div style={{
+            width: 28, height: 28, margin: '0 auto 12px',
+            border: `3px solid ${C.lineSoft}`, borderTopColor: C.green,
+            borderRadius: '50%', animation: 'mnspin 0.8s linear infinite'
+          }}/>
+          <div style={{ fontSize: '0.9375rem', fontWeight: 700, color: C.ink }}>投稿を読み込んでいます…</div>
+          <div style={{ fontSize: '0.8125rem', marginTop: 4 }}>少しお待ちください</div>
+        </>
+      )}
+    </div>
+  );
+}
+
+function ScrollingList({ posts, regionColor, onPostClick, tagMap, noAutoScroll = false, staticFlow = false, loading = false, loadError = false, emptyText = 'まだ投稿がありません' }) {
   const contentRef = useRef(null);
+  const viewportRef = useRef(null);
   const offsetRef = useRef(0);              // 現在の縦オフセット（px、見た目用）
   const lastUserActionRef = useRef(0);
   const [hovering, setHovering] = useState(false);
   const [tick, setTick] = useState(0);      // 再レンダリングトリガー
 
-  const needsScroll = posts.length > 0 && !noAutoScroll;
+  const needsScroll = posts.length > 0 && !noAutoScroll && !staticFlow;
+
+  // React の onWheel / onTouchMove は passive で登録されるため preventDefault が無視され、
+  // リスト内スクロールとページ全体のスクロールが同時に走っていた。
+  // ネイティブに passive:false で張り直して、ページ側へのスクロール伝播を止める。
+  useEffect(() => {
+    if (staticFlow) return;
+    const el = viewportRef.current;
+    if (!el) return;
+    const block = (e) => e.preventDefault();
+    el.addEventListener('wheel', block, { passive: false });
+    el.addEventListener('touchmove', block, { passive: false });
+    return () => {
+      el.removeEventListener('wheel', block);
+      el.removeEventListener('touchmove', block);
+    };
+  }, [staticFlow]);
   // 投稿少なくても確実にループするよう4倍化（必要に応じて）
-  const repeats = noAutoScroll ? 1 : (posts.length <= 2 ? 6 : posts.length <= 4 ? 4 : 2);
+  const repeats = (noAutoScroll || staticFlow) ? 1 : (posts.length <= 2 ? 6 : posts.length <= 4 ? 4 : 2);
   const renderList = needsScroll ? Array.from({ length: repeats }, () => posts).flat() : posts;
 
   // posts変更時にoffsetリセット
@@ -2936,7 +3173,6 @@ function ScrollingList({ posts, regionColor, onPostClick, tagMap, noAutoScroll =
 
   // 手動スクロール：wheel/touchで offset を直接動かす
   const handleWheel = (e) => {
-    e.preventDefault();
     lastUserActionRef.current = Date.now();
     const content = contentRef.current;
     if (!content) return;
@@ -2996,23 +3232,31 @@ function ScrollingList({ posts, regionColor, onPostClick, tagMap, noAutoScroll =
 
   return (
     <div
-      onWheel={handleWheel}
-      onTouchStart={handleTouchStart}
-      onTouchMove={handleTouchMove}
-      onTouchEnd={handleTouchEnd}
+      ref={viewportRef}
+      onWheel={staticFlow ? undefined : handleWheel}
+      onTouchStart={staticFlow ? undefined : handleTouchStart}
+      onTouchMove={staticFlow ? undefined : handleTouchMove}
+      onTouchEnd={staticFlow ? undefined : handleTouchEnd}
       onMouseEnter={() => setHovering(true)}
       onMouseLeave={() => setHovering(false)}
-      style={{
-        flex: 1,
-        overflow: 'hidden',
-        position: 'relative',
-        minHeight: 0
-      }}
+      style={staticFlow
+        ? { position: 'relative' }
+        : {
+            flex: 1,
+            overflow: 'hidden',
+            position: 'relative',
+            minHeight: 0,
+            overscrollBehavior: 'contain',
+            touchAction: 'none'
+          }
+      }
     >
       {posts.length === 0 ? (
-        <div style={{ textAlign: 'center', color: C.inkLight, padding: 40, fontFamily: FONT_HAND }}>
-          まだ投稿がありません
-        </div>
+        (loading || loadError) ? <LoadingNote error={loadError}/> : (
+          <div style={{ textAlign: 'center', color: C.inkLight, padding: 40, fontFamily: FONT_HAND }}>
+            {emptyText}
+          </div>
+        )
       ) : (
         <div
           ref={contentRef}
@@ -3224,15 +3468,182 @@ function QRScreen() {
 // =====================================
 // お客様ページ（QRからアクセス）マップ＋投稿
 // =====================================
-function CustomerPostPage({ posts, addPost, updatePost, stores, tags, settings }) {
+function CustomerTabs({ tab, setTab, sticky = false, isMobile = false }) {
+  const btn = (active) => ({
+    flex: 1, padding: '10px 8px', border: 'none', cursor: 'pointer',
+    fontFamily: FONT_HAND, fontSize: '0.875rem', fontWeight: 700, letterSpacing: 1,
+    background: active ? C.green : 'transparent',
+    color: active ? '#fff' : C.inkSub,
+    borderRadius: 999,
+  });
+  return (
+    <div style={{
+      display: 'flex', gap: 4, padding: 6, margin: '8px 12px 0',
+      background: C.bgOff, border: `1px solid ${C.line}`, borderRadius: 999, flexShrink: 0,
+      // マップをスクロールで送っても投稿タブに戻れるよう上部に固定
+      ...(sticky ? { position: 'sticky', top: 8, zIndex: 30 } : {}),
+    }}>
+      <button onClick={() => setTab('form')} style={btn(tab === 'form')}>📮 投稿する</button>
+      <button onClick={() => setTab('map')} style={btn(tab === 'map')}>{isMobile ? '📖 投稿を見る' : '🗾 マップを見る'}</button>
+    </div>
+  );
+}
+
+// =====================================
+// スマホ用：投稿の閲覧＋検索（地図なし）
+// =====================================
+function CustomerBrowse({ posts, updatePost, tags, postsLoading = false, postsLoadError = false }) {
+  const tagMap = useMemo(() => Object.fromEntries((tags || []).map(t => [t.key, t])), [tags]);
+  const [q, setQ] = useState('');
+  const [tagFilter, setTagFilter] = useState('');
+  const [detailPost, setDetailPost] = useState(null);
+
+  // 検索対象：本文・ペンネーム・県名・お店・区やサブ地域・場所名・タグ名
+  const searchIndex = useCallback((p) => [
+    p.message, p.penname, p.prefectureName, p.storeName,
+    p.tokyoWard, p.arakawaSubRegion, p.aichiSubRegion,
+    p.detail?.name,
+    ...(p.tags || []).map(k => tagMap[k]?.label || k),
+  ].filter(Boolean).join(' ').toLowerCase(), [tagMap]);
+
+  const results = useMemo(() => {
+    let list = posts;
+    const kw = q.trim().toLowerCase();
+    if (kw) {
+      // 空白区切りの複数語はすべて含むものを残す
+      const words = kw.split(/\s+/);
+      list = list.filter(p => { const t = searchIndex(p); return words.every(w => t.includes(w)); });
+    }
+    if (tagFilter) list = list.filter(p => (p.tags || []).includes(tagFilter));
+    return list;   // posts は新しい順で入ってくる
+  }, [posts, q, tagFilter, searchIndex]);
+
+  const searching = q.trim() !== '' || tagFilter !== '';
+  const emptyText = searching ? '該当する投稿が見つかりませんでした' : 'まだ投稿がありません';
+
+  return (
+    <>
+      {/* 検索 */}
+      <div style={{ padding: '10px 12px 0' }}>
+        <div style={{ position: 'relative' }}>
+          <span style={{ position: 'absolute', left: 12, top: '50%', transform: 'translateY(-50%)', fontSize: '0.9375rem', pointerEvents: 'none' }}>🔍</span>
+          <input
+            value={q}
+            onChange={(e) => setQ(e.target.value)}
+            placeholder="お店・地名・キーワードで検索"
+            style={{ width: '100%', padding: '11px 36px 11px 36px', borderRadius: 999, border: `1.5px solid ${C.line}`,
+              fontFamily: FONT_BODY, fontSize: '1rem', outline: 'none', boxSizing: 'border-box', background: C.bgOff }}
+          />
+          {q && (
+            <button onClick={() => setQ('')} aria-label="検索をクリア"
+              style={{ position: 'absolute', right: 8, top: '50%', transform: 'translateY(-50%)', border: 'none',
+                background: C.line, color: C.ink, borderRadius: '50%', width: 22, height: 22, cursor: 'pointer', fontSize: '0.8125rem', lineHeight: 1 }}>×</button>
+          )}
+        </div>
+      </div>
+
+      {/* タグで絞る（横スクロール） */}
+      {(tags || []).length > 0 && (
+        <div style={{ display: 'flex', gap: 6, overflowX: 'auto', padding: '10px 12px 0', WebkitOverflowScrolling: 'touch' }}>
+          {(tags || []).map(t => {
+            const on = tagFilter === t.key;
+            return (
+              <button key={t.key} onClick={() => setTagFilter(on ? '' : t.key)}
+                style={{ flexShrink: 0, padding: '5px 12px', borderRadius: 999, cursor: 'pointer',
+                  fontFamily: FONT_HAND, fontSize: '0.8125rem', fontWeight: on ? 700 : 500,
+                  border: `1.5px solid ${on ? t.color : C.line}`,
+                  background: on ? t.color + '22' : C.bgWhite, color: on ? t.color : C.inkSub }}>
+                {t.emoji}{t.label}
+              </button>
+            );
+          })}
+        </div>
+      )}
+
+      <div style={{ padding: '8px 16px 0', fontFamily: FONT_HAND, fontSize: '0.75rem', color: C.inkSub }}>
+        {postsLoading && posts.length === 0 ? '読み込み中…' : `${results.length} 件`}
+      </div>
+
+      <ScrollingList
+        posts={results}
+        regionColor={C.green}
+        onPostClick={setDetailPost}
+        tagMap={tagMap}
+        staticFlow
+        loading={postsLoading && posts.length === 0}
+        loadError={postsLoadError && posts.length === 0}
+        emptyText={emptyText}
+      />
+
+      {detailPost && (
+        <PostDetailModal
+          post={posts.find(p => p.id === detailPost.id) || detailPost}
+          updatePost={updatePost}
+          tagMap={tagMap}
+          onClose={() => setDetailPost(null)}
+        />
+      )}
+    </>
+  );
+}
+
+function CustomerPostPage({ posts, addPost, updatePost, stores, tags, settings, postsLoading = false, postsLoadError = false }) {
   const [postDone, setPostDone] = useState(false);
   const [formKey, setFormKey] = useState(0); // フォームリセット用
+  const [tab, setTab] = useState('map');     // 一覧（投稿を見る）がメイン。投稿は右下のボタンから
+  const isMobile = useIsMobile();
 
   const handleSubmit = (post) => {
     addPost(post);
     setPostDone(true);
     setFormKey(k => k + 1); // フォームをリセット
   };
+
+  // マップ：閲覧専用（ピン調整と設定の書き換えはさせない）
+  if (tab === 'map') {
+    return (
+      <div className={isMobile ? undefined : 'mn-screen'} style={{
+        // スマホはページごとスクロール、PC/タブレットは mn-screen で画面固定
+        ...(isMobile ? { minHeight: '100dvh' } : {}),
+        display: 'flex', flexDirection: 'column', background: C.bgWhite, fontFamily: FONT_BODY,
+      }}>
+        {/* 投稿完了バナー（フォームから戻ってきたときに出る） */}
+        {postDone && (
+          <div style={{ margin: '12px 12px 0', padding: '12px 16px', background: C.greenLight, borderRadius: 10, display: 'flex', alignItems: 'center', gap: 10, border: `1px solid ${C.green}`, flexShrink: 0 }}>
+            <span style={{ fontSize: '1.25rem' }}>🎉</span>
+            <div>
+              <div style={{ fontFamily: FONT_HAND, fontSize: '0.9375rem', color: C.green, fontWeight: 700 }}>投稿ありがとうございました！</div>
+              <div style={{ fontFamily: FONT_HAND, fontSize: '0.75rem', color: C.inkSub, marginTop: 2 }}>みんなの投稿に反映されました。</div>
+            </div>
+            <button onClick={() => setPostDone(false)} style={{ marginLeft: 'auto', background: 'none', border: 'none', cursor: 'pointer', color: C.inkSub, fontSize: '1.125rem' }}>×</button>
+          </div>
+        )}
+        {isMobile ? (
+          /* スマホは地図を出さず、投稿の閲覧と検索に絞る */
+          <CustomerBrowse
+            posts={posts} updatePost={updatePost} tags={tags}
+            postsLoading={postsLoading} postsLoadError={postsLoadError}
+          />
+        ) : (
+          <div style={{ flex: 1, minHeight: 0 }}>
+            <MapView
+              posts={posts} addPost={addPost} updatePost={updatePost}
+              stores={stores} tags={tags}
+              settings={settings} updateSettings={() => {}}
+              mobile={false} allowPinEdit={false} embedded
+              postsLoading={postsLoading} postsLoadError={postsLoadError}
+            />
+          </div>
+        )}
+
+        {/* 右下の投稿ボタン */}
+        <button onClick={() => { setPostDone(false); setTab('form'); }} style={s.fabPost}>
+          <span style={{ fontSize: '1.375rem', lineHeight: 1 }}>＋</span>
+          <span>投稿する</span>
+        </button>
+      </div>
+    );
+  }
 
   return (
     <div style={{ minHeight: '100vh', background: C.bgWhite, fontFamily: FONT_BODY }}>
@@ -3245,23 +3656,11 @@ function CustomerPostPage({ posts, addPost, updatePost, stores, tags, settings }
         </div>
       </header>
 
-      {/* 投稿完了バナー */}
-      {postDone && (
-        <div style={{ margin: '12px 16px', padding: '12px 16px', background: C.greenLight, borderRadius: 10, display: 'flex', alignItems: 'center', gap: 10, border: `1px solid ${C.green}` }}>
-          <span style={{ fontSize: '1.25rem' }}>🎉</span>
-          <div>
-            <div style={{ fontFamily: FONT_HAND, fontSize: '0.9375rem', color: C.green, fontWeight: 700 }}>投稿ありがとうございました！</div>
-            <div style={{ fontFamily: FONT_HAND, fontSize: '0.75rem', color: C.inkSub, marginTop: 2 }}>マップに反映されました。続けて投稿できます。</div>
-          </div>
-          <button onClick={() => setPostDone(false)} style={{ marginLeft: 'auto', background: 'none', border: 'none', cursor: 'pointer', color: C.inkSub, fontSize: '1.125rem' }}>×</button>
-        </div>
-      )}
-
-      {/* 常にフォームを表示 */}
+      {/* onCancel を渡すと「← 戻る」が出て、投稿完了の約1.8秒後に自動で一覧へ戻る */}
       <PostForm
         key={formKey}
         onSubmit={handleSubmit}
-        onCancel={null}
+        onCancel={() => setTab('map')}
         stores={stores}
         tags={tags}
       />
@@ -3936,7 +4335,7 @@ function PostsTab({ posts, removePost, removeAllPosts, updatePost, stores }) {
               <div style={{ flex: '0 0 90px', fontSize: '0.6875rem', color: C.inkSub }}>
                 {new Date(post.timestamp).toLocaleString('ja-JP', { month: 'numeric', day: 'numeric', hour: '2-digit', minute: '2-digit' })}
               </div>
-              <div style={{ flex: '0 0 90px', display: 'flex', gap: 4, flexWrap: 'wrap' }}>
+              <div style={{ flex: '0 0 130px', display: 'flex', gap: 4, flexWrap: 'wrap' }}>
                 {confirmId === post.id ? (
                   <>
                     <button onClick={() => { removePost(post.id); setConfirmId(null); }} style={{ ...s.rowBtn, background: C.pink, color: '#fff', borderColor: C.pink, padding: '3px 6px', fontSize: '0.6875rem' }}>確定</button>
@@ -3944,6 +4343,15 @@ function PostsTab({ posts, removePost, removeAllPosts, updatePost, stores }) {
                   </>
                 ) : (
                   <>
+                    <button
+                      onClick={() => updatePost(post.id, pr => ({ ...pr, featured: !pr.featured }))}
+                      title={post.featured ? 'おすすめから外す' : '「面白い」タブに出す'}
+                      style={{ ...s.rowBtn, padding: '3px 6px', fontSize: '0.6875rem',
+                        color: post.featured ? C.ink : C.inkLight,
+                        background: post.featured ? C.yellowLight : 'transparent',
+                        borderColor: post.featured ? C.yellow : C.line, fontWeight: post.featured ? 700 : 400 }}>
+                      {post.featured ? '★' : '☆'}
+                    </button>
                     <button onClick={() => startEdit(post)} style={{ ...s.rowBtn, color: C.green, borderColor: C.green, padding: '3px 6px', fontSize: '0.6875rem' }}>編集</button>
                     <button onClick={() => setConfirmId(post.id)} style={{ ...s.rowBtn, color: C.pink, borderColor: C.pink, padding: '3px 6px', fontSize: '0.6875rem' }}>削除</button>
                   </>
@@ -5472,7 +5880,7 @@ export default function App() {
   const [adminLoggedIn, setAdminLoggedIn] = useState(false);
   const [tabPos, setTabPos] = useState(null); // null = デフォルト位置（右上固定）
   const tabDragOffset = useRef(null);
-  const { posts, addPost, removePost, removeAllPosts, updatePost } = usePosts();
+  const { posts, addPost, removePost, removeAllPosts, updatePost, loading: postsLoading, loadError: postsLoadError } = usePosts();
   const { stores, saveStore, deleteStore } = useStores();
   const { settings, updateSettings } = useSettings();
   // 掲示板3機能
@@ -5540,7 +5948,7 @@ export default function App() {
 
   // お客様モード：フォームのみ表示
   if (isCustomer) {
-    return <CustomerPostPage posts={posts} addPost={addPost} updatePost={updatePost} stores={stores} tags={tags} settings={settings}/>;
+    return <CustomerPostPage posts={posts} addPost={addPost} updatePost={updatePost} stores={stores} tags={tags} settings={settings} postsLoading={postsLoading} postsLoadError={postsLoadError}/>;
   }
 
   // 管理タブ選択中かつ未ログイン → ログイン画面
@@ -5581,7 +5989,7 @@ export default function App() {
         )}
       </div>
 
-      {view === 'map' && <MapView posts={posts} addPost={addPost} updatePost={updatePost} stores={stores} tags={tags} settings={settings} updateSettings={updateSettings}/>}
+      {view === 'map' && <MapView posts={posts} addPost={addPost} updatePost={updatePost} stores={stores} tags={tags} settings={settings} updateSettings={updateSettings} postsLoading={postsLoading} postsLoadError={postsLoadError}/>}
       {view === 'board' && (
         <BoardScreen
           events={eventsCtrl.items} eventsCtrl={eventsCtrl}
@@ -5736,6 +6144,15 @@ const s = {
   },
 
   // FAB
+  fabPost: {
+    position: 'fixed', bottom: 20, right: 20, zIndex: 100,
+    display: 'flex', alignItems: 'center', gap: 6,
+    padding: '14px 20px',
+    background: C.pink, color: '#fff',
+    border: 'none', borderRadius: 999, cursor: 'pointer',
+    fontFamily: FONT_DISPLAY, fontSize: '0.9375rem', fontWeight: 700, letterSpacing: 2,
+    boxShadow: '0 8px 24px rgba(230, 0, 126, 0.4)'
+  },
   fab: {
     position: 'fixed', bottom: 24, left: 24, zIndex: 100,
     display: 'flex', alignItems: 'center', gap: 8,
@@ -5747,7 +6164,7 @@ const s = {
   },
 
   // モニター
-  monitorScreen: { height: '100vh', width: '100vw', background: C.bgWhite, color: C.ink, padding: '24px 32px', overflow: 'hidden', boxSizing: 'border-box', display: 'flex', flexDirection: 'column', position: 'relative' },
+  monitorScreen: { width: '100%', background: C.bgWhite, color: C.ink, padding: '24px 32px', overflow: 'hidden', boxSizing: 'border-box', display: 'flex', flexDirection: 'column', position: 'relative' },
   monitorHeader: { display: 'flex', justifyContent: 'space-between', alignItems: 'center', gap: 14, marginBottom: 8, flexShrink: 0, flexWrap: 'wrap' },
   monitorKanji: { fontFamily: FONT_DISPLAY, fontSize: '2rem', fontWeight: 800, color: C.bgWhite, background: C.ink, padding: '6px 14px', borderRadius: 8, letterSpacing: 3, lineHeight: 1 },
   monitorTitle: { fontFamily: FONT_DISPLAY, fontSize: '1.5rem', fontWeight: 700, letterSpacing: 3, lineHeight: 1 },
@@ -5759,6 +6176,7 @@ const s = {
   controlBar: { display: 'flex', alignItems: 'center', gap: 16, marginBottom: 12, flexWrap: 'wrap', flexShrink: 0 },
   modeToggle: { display: 'flex', gap: 0, background: C.bgOff, border: `1px solid ${C.line}`, borderRadius: 999, padding: 3 },
   modeBtn: { padding: '6px 14px', fontFamily: FONT_HAND, fontSize: '0.75rem', fontWeight: 600, color: C.inkSub, background: 'transparent', border: 'none', borderRadius: 999, cursor: 'pointer' },
+  modeBtnCompact: { padding: '5px 10px', fontSize: '0.8125rem', lineHeight: 1 },
   modeBtnActive: { background: C.green, color: '#fff' },
   regionTabs: { display: 'flex', gap: 6, flexWrap: 'wrap', flex: 1 },
   regionTab: { padding: '6px 14px', fontFamily: FONT_HAND, fontSize: '0.75rem', fontWeight: 600, color: C.inkSub, background: C.bgOff, border: `1px solid ${C.line}`, borderRadius: 999, letterSpacing: 2, cursor: 'pointer' },
@@ -5838,6 +6256,10 @@ const s = {
 
   // フィルタバー
   filterBar: { borderBottom: `1px solid ${C.line}`, background: C.bgOff, flexShrink: 0 },
+  listTabs: { display: 'flex', gap: 4, padding: 6, borderBottom: `1px solid ${C.line}`, background: C.bgWhite, flexShrink: 0 },
+  listTab: { flex: 1, padding: '7px 8px', border: 'none', borderRadius: 999, cursor: 'pointer',
+    background: 'transparent', color: C.inkSub, fontFamily: FONT_HAND, fontSize: '0.8125rem', fontWeight: 600, letterSpacing: 1 },
+  listTabActive: { background: C.green, color: '#fff', fontWeight: 700 },
   filterHeader: { display: 'flex', alignItems: 'center', gap: 8, padding: '10px 14px', cursor: 'pointer', fontFamily: FONT_HAND, fontSize: '0.8125rem', color: C.ink, userSelect: 'none' },
   filterActiveBadge: { background: C.green, color: '#fff', fontSize: '0.6875rem', fontWeight: 700, padding: '2px 7px', borderRadius: 999, minWidth: 18, textAlign: 'center' },
   filterClearBtn: { background: 'transparent', border: `1px solid ${C.line}`, padding: '3px 9px', borderRadius: 999, fontFamily: FONT_HAND, fontSize: '0.6875rem', fontWeight: 600, color: C.inkSub, cursor: 'pointer' },
@@ -5962,7 +6384,7 @@ const s = {
 
   // モーダル
   modalOverlay: { position: 'fixed', inset: 0, background: 'rgba(0,0,0,0.4)', display: 'flex', alignItems: 'center', justifyContent: 'center', zIndex: 2000, backdropFilter: 'blur(4px)' },
-  modal: { background: C.bgWhite, padding: 32, maxWidth: 500, width: '90%', border: `1px solid ${C.line}`, borderRadius: 6, boxShadow: '0 30px 60px rgba(0,0,0,0.2)', maxHeight: '90vh', overflow: 'auto' },
+  modal: { background: C.bgWhite, touchAction: 'pan-y', padding: 32, maxWidth: 500, width: '90%', border: `1px solid ${C.line}`, borderRadius: 6, boxShadow: '0 30px 60px rgba(0,0,0,0.2)', maxHeight: '90vh', overflow: 'auto' },
   modalLabel: { display: 'block', fontFamily: FONT_DISPLAY, fontSize: '0.75rem', fontWeight: 600, color: C.ink, marginBottom: 6, letterSpacing: 3 },
   modalBtnGhost: { padding: '10px 20px', background: 'transparent', border: `1.5px solid ${C.ink}`, fontFamily: FONT_HAND, fontSize: '0.875rem', fontWeight: 600, cursor: 'pointer', color: C.ink, borderRadius: 4 },
   modalBtnPrimary: { padding: '10px 20px', background: C.green, border: 'none', fontFamily: FONT_HAND, fontSize: '0.875rem', fontWeight: 600, cursor: 'pointer', color: '#fff', borderRadius: 4 },
@@ -6107,7 +6529,14 @@ if (typeof document !== 'undefined' && !document.getElementById('mn-global-style
     @import url('https://fonts.googleapis.com/css2?family=M+PLUS+Rounded+1c:wght@400;500;700;800&display=swap');
     * { box-sizing: border-box; }
     body { margin: 0; padding: 0; background: ${C.bgWhite}; }
+    /* スクロール終端の跳ね返り／プルトゥリフレッシュのみ抑止。通常のスクロールは妨げない */
+    html, body { overscroll-behavior: none; }
+    /* 画面固定レイアウトの高さ。svh はツールバーの出入りで値が変わらないので揺れない。
+       未対応ブラウザは 100vh にフォールバックする */
+    .mn-screen { height: 100vh; }
+    @supports (height: 100svh) { .mn-screen { height: 100svh; } }
     @keyframes pulse { 0%, 100% { opacity: 1; transform: scale(1); } 50% { opacity: 0.4; transform: scale(1.3); } }
+    @keyframes mnspin { to { transform: rotate(360deg); } }
     input:focus, textarea:focus, select:focus { border-color: ${C.green} !important; box-shadow: 0 0 0 3px ${C.green}25 !important; }
     button:active:not(:disabled) { transform: translateY(1px); }
   `;
