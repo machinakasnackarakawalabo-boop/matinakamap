@@ -1765,10 +1765,11 @@ function MapView({ posts, addPost, updatePost, stores, tags, settings, updateSet
   }, [mapWidthPct]);
   const [prefFilter, setPrefFilter] = useState('');     // 県フィルタ
   const [subFilter, setSubFilter] = useState('');       // 区・サブ地域フィルタ（地図のピンから選択）
-  const [listTab, setListTab] = useState('all');         // 一覧タブ: all / new / featured
-  const [tagFilter, setTagFilter] = useState('');       // タグフィルタ
-  const [dateRange, setDateRange] = useState('all');    // 期間フィルタ: 'all'|'today'|'week'|'month'|'3months'|'year'
-  const [photoOnly, setPhotoOnly] = useState(false);    // 写真ありのみ
+  const [selTags, setSelTags] = useState([]);            // ジャンル（複数選択・どれかに当てはまる）
+  const [featuredOnly, setFeaturedOnly] = useState(false); // 管理画面で★を付けた「面白い投稿」だけ
+  const [sort, setSort] = useState('new');
+  const [sheet, setSheet] = useState(null);              // 'area' | 'genre' | null
+  const pendingFilter = useRef(null);                    // エリアのシートで地域を切り替えたとき、切替後に当てる県・区
   const [time, setTime] = useState(new Date());
   const [regionIdx, setRegionIdx] = useState(0);
   const [slideshow, setSlideshow] = useState(true);
@@ -1855,58 +1856,89 @@ function MapView({ posts, addPost, updatePost, stores, tags, settings, updateSet
     return `${finalX} ${finalY} ${finalW} ${finalH}`;
   }, [currentRegion, stores]);
 
-  // 地図に渡す投稿（subFilter は未適用）。
-  // ここで subFilter まで掛けると、選択中の区以外のピンの件数が全部0になってしまう。
-  const regionPosts = useMemo(() => {
-    let list;
-    if (currentRegion === '全国') {
-      list = posts;
-    } else if (currentRegion === '愛知') {
-      list = posts.filter(p => p.prefecture === 'aichi');
-    } else if (currentRegion === '東京23区') {
-      list = posts.filter(p => p.prefecture === 'tokyo');
-    } else {
-      list = posts.filter(p => p.region === currentRegion);
-    }
+  const matchTags = (p) => selTags.length === 0 || (p.tags || []).some(k => selTags.includes(k));
+
+  // 地域と県だけを当てた投稿（ジャンルの件数計算に使う）
+  const regionBase = useMemo(() => {
+    let list = posts.filter(p => inMapRegion(p, currentRegion));
     if (prefFilter) list = list.filter(p => p.prefecture === prefFilter || p.storeId === prefFilter);
-    if (tagFilter) list = list.filter(p => (p.tags || []).includes(tagFilter));
-    if (photoOnly) list = list.filter(p => !!p.photo);
-    if (dateRange !== 'all') {
-      const now = Date.now();
-      const day = 86400000;
-      const limits = { today: day, week: 7*day, month: 30*day, '3months': 90*day, year: 365*day };
-      const lim = limits[dateRange];
-      if (lim) list = list.filter(p => (now - (p.timestamp || 0)) <= lim);
-    }
     return list;
-  }, [posts, currentRegion, prefFilter, tagFilter, photoOnly, dateRange]);
+  }, [posts, currentRegion, prefFilter]);
+
+  // 地図に渡す投稿（ジャンルまで適用、subFilter は未適用）。
+  // ここで subFilter まで掛けると、選択中の区以外のピンの件数が全部0になってしまう。
+  const regionPosts = useMemo(() => regionBase.filter(matchTags), [regionBase, selTags]);
 
   // 一覧に出す投稿（地図のピンで選んだ区・サブ地域まで適用）
-  const visiblePosts = useMemo(() => {
-    if (!subFilter) return regionPosts;
-    if (currentRegion === '東京23区') {
-      // TokyoMapView の subCounts と同じ判定にする（ずれると件数と一覧が食い違う）
-      return regionPosts.filter(p => (p.tokyoWard || (p.storeId === 'arakawa' ? '荒川区' : null)) === subFilter);
-    }
-    if (currentRegion === '荒川区') return regionPosts.filter(p => p.arakawaSubRegion === subFilter);
-    if (currentRegion === '愛知') return regionPosts.filter(p => p.aichiSubRegion === subFilter);
-    return regionPosts;
-  }, [regionPosts, currentRegion, subFilter]);
+  // 区・町名の判定は TokyoMapView 等の subCounts と同じ式（regionSubKey）にする。ずれると件数と一覧が食い違う
+  const matchSub = (p) => !subFilter || regionSubKind(currentRegion) !== 'sub' || regionSubKey(currentRegion, p) === subFilter;
+  const visiblePosts = useMemo(() => regionPosts.filter(matchSub), [regionPosts, currentRegion, subFilter]);
 
-  // 地域を切り替えたら区の選択は解除（残すと一覧が空になる）
-  useEffect(() => { setSubFilter(''); }, [currentRegion]);
+  // 地域を切り替えたら県・区の選択は解除（残すと一覧が空になる）。
+  // エリアのシートで地域と県を一緒に選んだときは、切替後にその県・区を当てる。
+  useEffect(() => {
+    const next = pendingFilter.current;
+    pendingFilter.current = null;
+    setSubFilter(next?.sub || '');
+    setPrefFilter(next?.pref || '');
+  }, [currentRegion]);
 
-  // 一覧タブの適用。地図のピン件数には影響させない（地図は regionPosts のまま）
-  const NEW_LIMIT = 20;
-  const listPosts = useMemo(() => {
-    if (listTab === 'new') return visiblePosts.slice(0, NEW_LIMIT);   // posts は新しい順に並んでいる
-    if (listTab === 'featured') return visiblePosts.filter(p => p.featured);
-    return visiblePosts;
-  }, [visiblePosts, listTab]);
-
-  const listEmptyText = listTab === 'featured'
+  // 一覧に出す投稿。「面白い」と並び替えは一覧だけに効かせ、地図のピン件数には影響させない
+  const listPosts = useMemo(
+    () => sortPosts(featuredOnly ? visiblePosts.filter(p => p.featured) : visiblePosts, sort),
+    [visiblePosts, featuredOnly, sort]);
+  const pcFiltering = selTags.length > 0 || featuredOnly || !!prefFilter || !!subFilter;
+  const listEmptyText = featuredOnly && selTags.length === 0 && !prefFilter && !subFilter
     ? 'まだ「面白い投稿」が選ばれていません'
-    : 'まだ投稿がありません';
+    : pcFiltering ? '条件に合う投稿がありませんでした' : 'まだ投稿がありません';
+
+  // --- 一覧のエリア／ジャンル（スマホと同じシートを使う） ---
+  const passListOnly = (p) => matchTags(p) && (!featuredOnly || p.featured);
+  const areaSheetRows = useMemo(() => activeRegions.filter(r => r !== '全国').map(r => {
+    const inR = posts.filter(p => inMapRegion(p, r));
+    const base = inR.filter(passListOnly);
+    const keys = [...new Set(inR.map(p => regionSubKey(r, p)).filter(Boolean))];
+    keys.sort((a, b) => (PREF_ORDER[regionSubLabel(r, a)] ?? 999) - (PREF_ORDER[regionSubLabel(r, b)] ?? 999)
+      || String(a).localeCompare(String(b), 'ja'));
+    return {
+      key: r, label: r, color: areaColor(r), n: base.length,
+      subs: keys.map(k => ({ key: k, label: regionSubLabel(r, k), n: base.filter(p => regionSubKey(r, p) === k).length })),
+    };
+  }), [activeRegions, posts, selTags, featuredOnly]);
+  const areaSheetCount = (a, sb) => {
+    const r = a || '全国';
+    return posts.filter(p => inMapRegion(p, r) && passListOnly(p) && (!sb || regionSubKey(r, p) === sb)).length;
+  };
+  const applyAreaSheet = (a, sb) => {
+    const r = a || '全国';
+    const kind = regionSubKind(r);
+    const next = { pref: sb && kind === 'pref' ? sb : '', sub: sb && kind === 'sub' ? sb : '' };
+    setSlideshow(false);
+    setPinnedRegion(r);
+    if (r === currentRegion) { setPrefFilter(next.pref); setSubFilter(next.sub); }
+    else { pendingFilter.current = next; const idx = activeRegions.indexOf(r); if (idx !== -1) setRegionIdx(idx); }
+    setSheet(null);
+  };
+  const genreSheetBase = useMemo(
+    () => regionBase.filter(p => matchSub(p) && (!featuredOnly || p.featured)),
+    [regionBase, currentRegion, subFilter, featuredOnly]);
+  const closeListSheet = useCallback(() => setSheet(null), []);
+
+  // ピンで選んだら、その地域でスライドショーを止める（選んだ条件が次の地域で消えないように）
+  const holdRegion = () => { setSlideshow(false); setPinnedRegion(currentRegion); };
+  const pickSubByPin = (v) => { holdRegion(); setSubFilter(v); };
+  const pickPrefByPin = (v) => { holdRegion(); setPrefFilter(v); };
+
+  const pcSubName = prefFilter ? (PREFS[prefFilter]?.name || stores[prefFilter]?.name || prefFilter) : subFilter;
+  const pcAreaLabel = currentRegion === '全国' && !pcSubName ? 'エリア' : `${currentRegion}${pcSubName ? `›${pcSubName}` : ''}`;
+  const pcAreaColor = areaColor(currentRegion === '全国' ? '' : currentRegion);
+  const pcAreaPicked = !slideshow && (currentRegion !== '全国' || !!pcSubName);
+  const pcGenreLabel = selTags.length === 0 ? 'ジャンル'
+    : selTags.length === 1 ? (tagMap[selTags[0]]?.label || 'ジャンル') : `ジャンル ${selTags.length}`;
+  const clearListFilters = () => {
+    setSelTags([]); setFeaturedOnly(false); setPrefFilter(''); setSubFilter('');
+    if (!slideshow) setPinnedRegion('全国');
+  };
 
   // 現在の地域に含まれる県の一覧（フィルタ用）
   const prefsInView = useMemo(() => {
@@ -2041,17 +2073,17 @@ function MapView({ posts, addPost, updatePost, stores, tags, settings, updateSet
             <AichiMapView posts={regionPosts}
               isPinMode={pinMode} onPinDrag={handlePinDrag}
               containerRef={mapSvgRef} pinOverrides={settings?.pinOverrides}
-              selected={subFilter} onSelect={setSubFilter}/>
+              selected={subFilter} onSelect={pickSubByPin}/>
           ) : currentRegion === '荒川区' ? (
             <ArakawaMapView posts={regionPosts}
               isPinMode={pinMode} onPinDrag={handlePinDrag}
               containerRef={mapSvgRef} pinOverrides={settings?.pinOverrides}
-              selected={subFilter} onSelect={setSubFilter}/>
+              selected={subFilter} onSelect={pickSubByPin}/>
           ) : currentRegion === '東京23区' ? (
             <TokyoMapView posts={regionPosts}
               isPinMode={pinMode} onPinDrag={handlePinDrag}
               containerRef={mapSvgRef} pinOverrides={settings?.pinOverrides}
-              selected={subFilter} onSelect={setSubFilter}/>
+              selected={subFilter} onSelect={pickSubByPin}/>
           ) : (
             <JapanMapView
               pins={pins}
@@ -2063,7 +2095,7 @@ function MapView({ posts, addPost, updatePost, stores, tags, settings, updateSet
               onPinDrag={handlePinDrag}
               svgRef={mapSvgRef}
               selectedKey={prefFilter}
-              onSelect={setPrefFilter}
+              onSelect={pickPrefByPin}
             />
           )}
 
@@ -2161,35 +2193,71 @@ function MapView({ posts, addPost, updatePost, stores, tags, settings, updateSet
         )}
 
         <aside style={{ ...s.focusPanel, minWidth: 0, ...(mobile ? { flex: 'none', overflow: 'visible' } : { flex: 1, minHeight: 0 }) }}>
-          {/* 一覧タブ：すべて / 新着 / 面白い */}
-          <div style={s.listTabs}>
-            {[
-              { key: 'all', label: 'すべて' },
-              { key: 'new', label: '🆕 新着' },
-              { key: 'featured', label: '⭐ 面白い' },
-            ].map(t => (
-              <button key={t.key} onClick={() => setListTab(t.key)}
-                style={{ ...s.listTab, ...(listTab === t.key ? s.listTabActive : {}) }}>
-                {t.label}
+          {/* 一覧の操作バー：スマホと同じ「エリア▼ ジャンル▼ 並び替え」 */}
+          <div style={s.pcBar}>
+            <div style={{ display: 'flex', alignItems: 'center', gap: 6, flexWrap: 'wrap' }}>
+              <button onClick={() => setSheet('area')}
+                style={{ ...s.facetBtn, ...(pcAreaPicked ? { background: pcAreaColor, borderColor: pcAreaColor, color: '#fff' } : {}) }}>
+                <span>📍</span><span style={s.facetLabel}>{pcAreaLabel}</span><span style={{ fontSize: '0.625rem' }}>▼</span>
               </button>
-            ))}
+              <button onClick={() => setSheet('genre')}
+                style={{ ...s.facetBtn, ...(selTags.length ? { background: C.ink, borderColor: C.ink, color: '#fff' } : {}) }}>
+                <span>🏷</span><span style={s.facetLabel}>{pcGenreLabel}</span><span style={{ fontSize: '0.625rem' }}>▼</span>
+              </button>
+              <button onClick={() => setFeaturedOnly(v => !v)} aria-pressed={featuredOnly}
+                style={{ ...s.facetBtn, ...(featuredOnly ? { background: C.yellowLight, borderColor: C.yellow } : {}) }}>
+                ⭐ 面白い
+              </button>
+              <select value={sort} onChange={(e) => setSort(e.target.value)} aria-label="並び替え" style={s.sortSelect}>
+                {SORTS.map(o => <option key={o.key} value={o.key}>{o.label}</option>)}
+              </select>
+            </div>
+            {pcFiltering && (
+              <div style={s.activeRow}>
+                {pcSubName && (
+                  <button onClick={() => { setPrefFilter(''); setSubFilter(''); }}
+                    style={{ ...s.activeChip, background: pcAreaColor + '18', color: pcAreaColor, borderColor: pcAreaColor }}>
+                    📍 {pcAreaLabel} ×
+                  </button>
+                )}
+                {selTags.map(k => {
+                  const t = tagMap[k];
+                  return t && (
+                    <button key={k} onClick={() => setSelTags(selTags.filter(x => x !== k))}
+                      style={{ ...s.activeChip, background: t.color + '18', color: t.color, borderColor: t.color }}>
+                      🏷 {t.label} ×
+                    </button>
+                  );
+                })}
+                {featuredOnly && (
+                  <button onClick={() => setFeaturedOnly(false)} style={{ ...s.activeChip, background: C.yellowLight, color: C.ink, borderColor: C.yellow }}>
+                    ⭐ 面白い ×
+                  </button>
+                )}
+                <button onClick={clearListFilters} style={s.clearAllBtn}>すべて解除</button>
+              </div>
+            )}
+            <div style={{ marginTop: 6, fontFamily: FONT_HAND, fontSize: '0.8125rem', color: C.inkSub }}>
+              <strong style={{ fontFamily: FONT_DISPLAY, fontSize: '0.9375rem', color: C.ink }}>{listPosts.length}</strong> 件の投稿
+            </div>
           </div>
 
-          {/* フィルタ・ソート */}
-          <FilterPanel
-            prefFilter={prefFilter} setPrefFilter={setPrefFilter}
-            subFilter={subFilter} setSubFilter={setSubFilter}
-            tagFilter={tagFilter} setTagFilter={setTagFilter}
-            dateRange={dateRange} setDateRange={setDateRange}
-            photoOnly={photoOnly} setPhotoOnly={setPhotoOnly}
-            prefsInView={prefsInView} tags={tags}
-          />
-
-          <ScrollingList posts={listPosts} regionColor={regionColor} onPostClick={setDetailPost} tagMap={tagMap} staticFlow={mobile}
+          <ScrollingList posts={listPosts} regionColor={(p) => areaColor(p.region)} onPostClick={setDetailPost} tagMap={tagMap} staticFlow={mobile}
             loading={postsLoading && posts.length === 0} loadError={postsLoadError && posts.length === 0}
             emptyText={listEmptyText}/>
         </aside>
       </main>
+
+      {sheet === 'area' && (
+        <AreaSheet rows={areaSheetRows} allCount={areaSheetCount('', '')}
+          initArea={currentRegion === '全国' ? '' : currentRegion}
+          initSub={regionSubKind(currentRegion) === 'pref' ? prefFilter : subFilter}
+          countFor={areaSheetCount} onApply={applyAreaSheet} onClose={closeListSheet}/>
+      )}
+      {sheet === 'genre' && (
+        <GenreSheet tags={tags} base={genreSheetBase} init={selTags}
+          onApply={(ts) => { setSelTags(ts); setSheet(null); }} onClose={closeListSheet}/>
+      )}
 
       {/* 投稿詳細モーダル（いいね・コメント） */}
       {detailPost && (
@@ -3683,14 +3751,12 @@ function CustomerTabs({ tab, setTab, sticky = false, isMobile = false }) {
   );
 }
 
-// =====================================
-// スマホ用：投稿の閲覧＋検索（地図なし）
-// =====================================
-// スマホ一覧で使うエリアの色と並び順（北→南。ホームの荒川区を先頭）
+// スマホ・PCの一覧で使うエリアの色と並び順（北→南。ホームの荒川区を先頭）
 const AREA_ORDER = ['荒川区', '北海道', '東北', '関東', '中部', '近畿', '中国', '四国', '九州', '沖縄', '海外'];
 const AREA_COLORS = {
   '荒川区': '#E6007E', '北海道': '#3E8ED0', '東北': '#2BA3A3', '関東': '#D9480F', '中部': '#19A86B',
   '近畿': '#E08E0B', '中国': '#8E6CC4', '四国': '#12A99A', '九州': '#C92A2A', '沖縄': '#0B8FC4', '海外': '#5C6B7A',
+  '東京23区': '#B5179E', '愛知': '#E67700',
 };
 const areaColor = (r) => AREA_COLORS[r] || '#6B6B6B';
 const PREF_ORDER = Object.fromEntries(Object.values(PREFS).map((p, i) => [p.name, i]));
@@ -3708,20 +3774,179 @@ const SORTS = [
   { key: 'comments', label: 'コメントが多い順' },
 ];
 
+// 地図の地域タブの下の階層。東京23区・荒川区・愛知は区／町名（subFilter）、それ以外は都道府県（prefFilter）
+const regionSubKind = (r) => (r === '東京23区' || r === '荒川区' || r === '愛知') ? 'sub' : 'pref';
+const regionSubKey = (r, p) =>
+  r === '東京23区' ? (p.tokyoWard || (p.storeId === 'arakawa' ? '荒川区' : null))
+  : r === '荒川区' ? p.arakawaSubRegion
+  : r === '愛知' ? p.aichiSubRegion
+  : p.prefecture;
+const regionSubLabel = (r, k) => regionSubKind(r) === 'pref' ? (PREFS[k]?.name || k) : k;
+const inMapRegion = (p, r) =>
+  r === '全国' ? true : r === '愛知' ? p.prefecture === 'aichi' : r === '東京23区' ? p.prefecture === 'tokyo' : p.region === r;
+
+// =====================================
+// スマホ用：下から出てくるシート
+// =====================================
+function BottomSheet({ title, onClose, footer, children }) {
+  const isMobile = useIsMobile();
+  const [dragY, setDragY] = useState(0);
+  const startY = useRef(null);
+
+  // 開いている間は後ろの一覧がスクロールしないようにする
+  useEffect(() => {
+    const prev = document.body.style.overflow;
+    document.body.style.overflow = 'hidden';
+    const onKey = (e) => { if (e.key === 'Escape') onClose(); };
+    window.addEventListener('keydown', onKey);
+    return () => { document.body.style.overflow = prev; window.removeEventListener('keydown', onKey); };
+  }, [onClose]);
+
+  // つまみ部分を下に引くと閉じる
+  const onTouchStart = (e) => { startY.current = e.touches[0].clientY; };
+  const onTouchMove = (e) => { if (startY.current != null) setDragY(Math.max(0, e.touches[0].clientY - startY.current)); };
+  const onTouchEnd = () => { if (dragY > 90) onClose(); setDragY(0); startY.current = null; };
+
+  return (
+    <div onClick={onClose} style={{ ...s.sheetOverlay, ...(isMobile ? {} : { alignItems: 'center', justifyContent: 'center', padding: 24 }) }}>
+      <div role="dialog" aria-modal="true" aria-label={title} onClick={(e) => e.stopPropagation()}
+        style={{ ...s.sheet, ...(isMobile ? {} : { maxWidth: 480, borderRadius: 18 }),
+          transform: `translateY(${dragY}px)`, transition: startY.current != null ? 'none' : 'transform 0.2s ease-out' }}>
+        <div onTouchStart={onTouchStart} onTouchMove={onTouchMove} onTouchEnd={onTouchEnd} style={{ touchAction: 'none' }}>
+          <div style={s.sheetGrabber}/>
+          <div style={s.sheetHead}>
+            <div style={{ fontFamily: FONT_DISPLAY, fontSize: '1rem', fontWeight: 700, letterSpacing: 1 }}>{title}</div>
+            <button onClick={onClose} aria-label="閉じる" style={s.sheetClose}>×</button>
+          </div>
+        </div>
+        <div style={s.sheetBody}>{children}</div>
+        <div style={s.sheetFoot}>{footer}</div>
+      </div>
+    </div>
+  );
+}
+
+// エリアのシート（スマホ・PC共通）。
+// rows: [{ key, label, color, n, subs: [{ key, label, n }] }]
+// エリアの行をタップすると「〇〇すべて」が選ばれ、その中の県などが開く。
+function AreaSheet({ rows, allCount, initArea = '', initSub = '', countFor, onApply, onClose }) {
+  const [a, setA] = useState(initArea);
+  const [sb, setSb] = useState(initSub);
+  const n = countFor(a, sb);
+  const subRadio = (on, col) => ({ ...s.radio, ...(on ? { borderColor: col, background: col, boxShadow: 'inset 0 0 0 4px #fff' } : {}) });
+  return (
+    <BottomSheet title="エリアを選ぶ" onClose={onClose}
+      footer={<>
+        <button onClick={() => { setA(''); setSb(''); }} style={s.sheetGhost}>クリア</button>
+        <button onClick={() => onApply(a, sb)} disabled={n === 0} style={{ ...s.sheetPrimary, opacity: n === 0 ? 0.4 : 1 }}>{n}件を表示</button>
+      </>}>
+      <button onClick={() => { setA(''); setSb(''); }} style={s.radioRow}>
+        <span style={{ ...s.radio, ...(a === '' ? s.radioOn : {}) }}/>
+        <span style={{ flex: 1, fontWeight: 700 }}>すべてのエリア</span>
+        <span style={s.rowCount}>{allCount}</span>
+      </button>
+      {rows.map(row => {
+        const on = a === row.key, dim = row.n === 0 && !on;
+        return (
+          <div key={row.key} style={{ borderTop: `1px solid ${C.lineSoft}` }}>
+            <button onClick={() => { setA(row.key); setSb(''); }} disabled={dim} aria-expanded={on}
+              style={{ ...s.radioRow, opacity: dim ? 0.35 : 1 }}>
+              <span style={subRadio(on && !sb, row.color)}/>
+              <span style={{ width: 10, height: 10, borderRadius: 3, background: row.color, flexShrink: 0 }}/>
+              <span style={{ flex: 1, fontWeight: 700 }}>{row.label}</span>
+              <span style={s.rowCount}>{row.n}</span>
+              {row.subs.length > 1 && <span style={{ color: C.inkLight, fontSize: '0.75rem', width: 14, textAlign: 'center' }}>{on ? '▴' : '▾'}</span>}
+            </button>
+            {on && row.subs.length > 1 && (
+              <div style={{ margin: '0 0 8px 34px', borderLeft: `3px solid ${row.color}`, paddingLeft: 6 }}>
+                <button onClick={() => setSb('')} style={s.radioRowSub}>
+                  <span style={subRadio(sb === '', row.color)}/>
+                  <span style={{ flex: 1 }}>{row.label}すべて</span>
+                  <span style={s.rowCount}>{row.n}</span>
+                </button>
+                {row.subs.map(x => {
+                  const sOn = sb === x.key, sDim = x.n === 0 && !sOn;
+                  return (
+                    <button key={x.key} onClick={() => setSb(x.key)} disabled={sDim} style={{ ...s.radioRowSub, opacity: sDim ? 0.35 : 1 }}>
+                      <span style={subRadio(sOn, row.color)}/>
+                      <span style={{ flex: 1 }}>{x.label}</span>
+                      <span style={s.rowCount}>{x.n}</span>
+                    </button>
+                  );
+                })}
+              </div>
+            )}
+          </div>
+        );
+      })}
+    </BottomSheet>
+  );
+}
+
+// ジャンルのシート（スマホ・PC共通）。複数選択で、どれかに当てはまる投稿を出す。
+// base: ジャンル以外の条件をすべて当てた投稿
+function GenreSheet({ tags, base, init = [], onApply, onClose }) {
+  const [sel, setSel] = useState(init);
+  const rows = useMemo(() => {
+    const order = new Map((tags || []).map((t, i) => [t.key, i]));
+    return (tags || [])
+      .map(t => ({ t, n: base.filter(p => (p.tags || []).includes(t.key)).length }))
+      .sort((x, y) => y.n - x.n || order.get(x.t.key) - order.get(y.t.key));
+  }, [tags, base]);
+  const n = sel.length === 0 ? base.length : base.filter(p => (p.tags || []).some(k => sel.includes(k))).length;
+  return (
+    <BottomSheet title="ジャンルを選ぶ" onClose={onClose}
+      footer={<>
+        <button onClick={() => setSel([])} style={s.sheetGhost}>クリア</button>
+        <button onClick={() => onApply(sel)} disabled={n === 0} style={{ ...s.sheetPrimary, opacity: n === 0 ? 0.4 : 1 }}>{n}件を表示</button>
+      </>}>
+      <div style={{ fontFamily: FONT_HAND, fontSize: '0.75rem', color: C.inkSub, marginBottom: 10 }}>
+        複数選べます（どれかに当てはまる投稿を表示）
+      </div>
+      <div style={{ display: 'flex', flexWrap: 'wrap', gap: 8 }}>
+        {rows.map(({ t, n: m }) => {
+          const on = sel.includes(t.key), dim = m === 0 && !on;
+          return (
+            <button key={t.key} disabled={dim} aria-pressed={on}
+              onClick={() => setSel(on ? sel.filter(x => x !== t.key) : [...sel, t.key])}
+              style={{ ...s.genreChip, borderColor: on ? t.color : C.line, background: on ? t.color + '1f' : C.bgWhite,
+                color: on ? t.color : C.ink, fontWeight: on ? 700 : 500, opacity: dim ? 0.35 : 1 }}>
+              {on ? '✓ ' : ''}{t.emoji}{t.label}<span style={{ opacity: 0.6, fontSize: '0.75rem', marginLeft: 2 }}>{m}</span>
+            </button>
+          );
+        })}
+      </div>
+    </BottomSheet>
+  );
+}
+
+// 並び替え（スマホ・PC共通）
+function sortPosts(list, sort) {
+  const L = (p) => (p.likes || []).length, Cm = (p) => (p.comments || []).length, T = (p) => p.timestamp || 0;
+  const cmp = {
+    new: (a, b) => T(b) - T(a),
+    old: (a, b) => T(a) - T(b),
+    likes: (a, b) => L(b) - L(a) || T(b) - T(a),
+    comments: (a, b) => Cm(b) - Cm(a) || T(b) - T(a),
+  }[sort] || ((a, b) => T(b) - T(a));
+  return [...list].sort(cmp);
+}
+
 // =====================================
 // スマホ用：投稿の閲覧＋検索（地図なし）
+// 調査レポート「スマホ 絞り込み UI 設計」の推奨案：
+//   初期表示は「エリア▼」「ジャンル▼」「並び替え」と件数だけ。県とタグはシートの中へ。
 // =====================================
 function CustomerBrowse({ posts, updatePost, tags, postsLoading = false, postsLoadError = false }) {
   const tagMap = useMemo(() => Object.fromEntries((tags || []).map(t => [t.key, t])), [tags]);
   const [q, setQ] = useState('');
   const [area, setArea] = useState('');
   const [sub, setSub] = useState('');
-  const [tag, setTag] = useState('');
+  const [selTags, setSelTags] = useState([]);   // 複数選択（どれかに当てはまればOK）
   const [sort, setSort] = useState('new');
-  const [tagsOpen, setTagsOpen] = useState(false);
+  const [sheet, setSheet] = useState(null);     // 'area' | 'genre' | null
   const [detailPost, setDetailPost] = useState(null);
 
-  // 検索対象：本文・ペンネーム・県名・お店・区やサブ地域・場所名・タグ名
   const searchIndex = useCallback((p) => [
     p.message, p.penname, p.prefectureName, p.storeName,
     p.tokyoWard, p.arakawaSubRegion, p.aichiSubRegion, p.country,
@@ -3736,62 +3961,44 @@ function CustomerBrowse({ posts, updatePost, tags, postsLoading = false, postsLo
     return posts.filter(p => { const t = searchIndex(p); return words.every(w => t.includes(w)); });
   }, [posts, q, searchIndex]);
 
-  const inArea = (p) => !area || p.region === area;
-  const inSub = (p) => !sub || subAreaOf(p) === sub;
-  const hasTag = (p) => !tag || (p.tags || []).includes(tag);
+  const matchArea = (p, a, sb) => (!a || p.region === a) && (!sb || subAreaOf(p) === sb);
+  const matchTags = (p, ts) => ts.length === 0 || (p.tags || []).some(k => ts.includes(k));
 
-  // 件数は「他の条件を当てたうえで、その項目を選んだら何件になるか」を出す
-  const areas = useMemo(() => {
-    const c = new Map();
-    byKeyword.filter(hasTag).forEach(p => p.region && c.set(p.region, (c.get(p.region) || 0) + 1));
+  const results = useMemo(
+    () => sortPosts(byKeyword.filter(p => matchArea(p, area, sub) && matchTags(p, selTags)), sort),
+    [byKeyword, area, sub, selTags, sort]);
+
+  // --- エリアシート用：件数はキーワードと（確定済みの）ジャンルを当てた後 ---
+  const areaBase = useMemo(() => byKeyword.filter(p => matchTags(p, selTags)), [byKeyword, selTags]);
+  const areaRows = useMemo(() => {
     const present = new Set(posts.map(p => p.region).filter(Boolean));
     const known = AREA_ORDER.filter(r => present.has(r));
     const extra = [...present].filter(r => !AREA_ORDER.includes(r)).sort();
-    return [...known, ...extra].map(r => [r, c.get(r) || 0]);
-  }, [posts, byKeyword, tag]);
+    return [...known, ...extra].map(r => {
+      const subsAll = [...new Set(posts.filter(p => p.region === r).map(subAreaOf))]
+        .sort((a, b) => (PREF_ORDER[a] ?? 999) - (PREF_ORDER[b] ?? 999) || a.localeCompare(b, 'ja'));
+      return {
+        key: r, label: r, color: areaColor(r),
+        n: areaBase.filter(p => p.region === r).length,
+        subs: subsAll.map(k => ({ key: k, label: k, n: areaBase.filter(p => p.region === r && subAreaOf(p) === k).length })),
+      };
+    });
+  }, [posts, areaBase]);
 
-  const subs = useMemo(() => {
-    if (!area) return [];
-    const c = new Map();
-    byKeyword.filter(p => p.region === area && hasTag(p)).forEach(p => { const k = subAreaOf(p); c.set(k, (c.get(k) || 0) + 1); });
-    const all = [...new Set(posts.filter(p => p.region === area).map(subAreaOf))];
-    all.sort((a, b) => (PREF_ORDER[a] ?? 999) - (PREF_ORDER[b] ?? 999) || a.localeCompare(b, 'ja'));
-    return all.map(k => [k, c.get(k) || 0]);
-  }, [posts, byKeyword, area, tag]);
+  // --- ジャンルシート用：件数はキーワードと（確定済みの）エリアを当てた後 ---
+  const genreBase = useMemo(() => byKeyword.filter(p => matchArea(p, area, sub)), [byKeyword, area, sub]);
 
-  const tagCounts = useMemo(() => {
-    const c = new Map();
-    byKeyword.filter(p => inArea(p) && inSub(p)).forEach(p => (p.tags || []).forEach(k => c.set(k, (c.get(k) || 0) + 1)));
-    return c;
-  }, [byKeyword, area, sub]);
+  const openArea = () => setSheet('area');
+  const openGenre = () => setSheet('genre');
+  const closeSheet = useCallback(() => setSheet(null), []);
+  const afterApply = () => { setSheet(null); window.scrollTo({ top: 0, behavior: 'smooth' }); };
+  const clearAll = () => { setQ(''); setArea(''); setSub(''); setSelTags([]); };
 
-  // 件数の多い順に並べ、閉じているときは上位だけ出す（選択中のものは必ず出す）
-  const TAGS_COLLAPSED = 8;
-  const sortedTags = useMemo(() => {
-    const order = new Map((tags || []).map((t, i) => [t.key, i]));
-    return [...(tags || [])].sort((a, b) => (tagCounts.get(b.key) || 0) - (tagCounts.get(a.key) || 0) || order.get(a.key) - order.get(b.key));
-  }, [tags, tagCounts]);
-  const visibleTags = tagsOpen ? sortedTags
-    : [...sortedTags.slice(0, TAGS_COLLAPSED), ...sortedTags.slice(TAGS_COLLAPSED).filter(t => t.key === tag)];
-
-  const results = useMemo(() => {
-    const list = byKeyword.filter(p => inArea(p) && inSub(p) && hasTag(p));
-    const L = (p) => (p.likes || []).length, Cm = (p) => (p.comments || []).length, T = (p) => p.timestamp || 0;
-    const cmp = {
-      new: (a, b) => T(b) - T(a),
-      old: (a, b) => T(a) - T(b),
-      likes: (a, b) => L(b) - L(a) || T(b) - T(a),
-      comments: (a, b) => Cm(b) - Cm(a) || T(b) - T(a),
-    }[sort];
-    return [...list].sort(cmp);
-  }, [byKeyword, area, sub, tag, sort]);
-
-  const pickArea = (r) => { setSub(''); setArea(area === r ? '' : r); };
-  const clearAll = () => { setQ(''); setArea(''); setSub(''); setTag(''); };
-  const filtering = q.trim() !== '' || area !== '' || tag !== '';
-  const emptyText = filtering ? '該当する投稿が見つかりませんでした' : 'まだ投稿がありません';
+  const areaLabel = area ? `${area}${sub ? `›${sub}` : ''}` : 'エリア';
+  const genreLabel = selTags.length === 0 ? 'ジャンル'
+    : selTags.length === 1 ? (tagMap[selTags[0]]?.label || 'ジャンル') : `ジャンル ${selTags.length}`;
+  const filtering = q.trim() !== '' || area !== '' || selTags.length > 0;
   const ac = area ? areaColor(area) : C.ink;
-  const activeTag = tag ? tagMap[tag] : null;
 
   return (
     <>
@@ -3809,117 +4016,56 @@ function CustomerBrowse({ posts, updatePost, tags, postsLoading = false, postsLo
           <input value={q} onChange={(e) => setQ(e.target.value)} placeholder="お店・地名・キーワードで検索"
             style={{ width: '100%', padding: '11px 38px', borderRadius: 999, border: `1.5px solid ${C.line}`,
               fontFamily: FONT_BODY, fontSize: '1rem', outline: 'none', boxSizing: 'border-box', background: C.bgOff }}/>
-          {q && (
-            <button onClick={() => setQ('')} aria-label="検索をクリア" style={s.browseClearX}>×</button>
-          )}
+          {q && <button onClick={() => setQ('')} aria-label="検索をクリア" style={s.browseClearX}>×</button>}
         </div>
       </div>
 
-      {/* エリア */}
-      {areas.length > 0 && (
-        <section style={{ padding: '14px 12px 0' }}>
-          <div style={s.browseLabel}><span>📍 エリア</span><span style={s.browseLabelHint}>タップで絞り込み</span></div>
-          <div style={s.browseRow}>
-            {areas.map(([r, n]) => {
-              const on = area === r, col = areaColor(r);
-              return (
-                <button key={r} onClick={() => pickArea(r)} disabled={n === 0 && !on}
-                  style={{ ...s.areaChip, borderColor: col, background: on ? col : C.bgWhite,
-                    color: on ? '#fff' : C.ink, opacity: n === 0 && !on ? 0.35 : 1 }}>
-                  {!on && <span style={{ width: 8, height: 8, borderRadius: '50%', background: col, flexShrink: 0 }}/>}
-                  {r}<span style={{ opacity: 0.75, fontWeight: 500 }}>{n}</span>
-                </button>
-              );
-            })}
-          </div>
-
-          {/* エリアの中の県（荒川区は町名） */}
-          {area && subs.length > 1 && (
-            <div style={{ ...s.subPanel, borderLeftColor: ac, background: ac + '10' }}>
-              <div style={{ fontFamily: FONT_HAND, fontSize: '0.6875rem', color: ac, fontWeight: 700, marginBottom: 6 }}>
-                {area === '荒川区' ? '町名で絞り込み' : area === '海外' ? '国で絞り込み' : `${area}の中で絞り込み`}
-              </div>
-              <div style={s.browseRow}>
-                <button onClick={() => setSub('')}
-                  style={{ ...s.subChip, borderColor: ac, background: !sub ? ac : C.bgWhite, color: !sub ? '#fff' : ac }}>
-                  すべて
-                </button>
-                {subs.map(([k, n]) => {
-                  const on = sub === k;
-                  return (
-                    <button key={k} onClick={() => setSub(on ? '' : k)} disabled={n === 0 && !on}
-                      style={{ ...s.subChip, borderColor: ac, background: on ? ac : C.bgWhite, color: on ? '#fff' : ac,
-                        opacity: n === 0 && !on ? 0.35 : 1 }}>
-                      {k}<span style={{ opacity: 0.75, fontWeight: 500 }}>{n}</span>
-                    </button>
-                  );
-                })}
-              </div>
-            </div>
-          )}
-        </section>
-      )}
-
-      {/* ジャンル（タグ） */}
-      {sortedTags.length > 0 && (
-        <section style={{ padding: '14px 12px 0' }}>
-          <div style={s.browseLabel}>
-            <span>🏷 ジャンル</span>
-            {sortedTags.length > TAGS_COLLAPSED && (
-              <button onClick={() => setTagsOpen(v => !v)} style={s.browseMore}>
-                {tagsOpen ? '閉じる ▴' : `すべて表示（${sortedTags.length}）▾`}
-              </button>
-            )}
-          </div>
-          <div style={s.browseRow}>
-            {visibleTags.map(t => {
-              const on = tag === t.key, n = tagCounts.get(t.key) || 0;
-              return (
-                <button key={t.key} onClick={() => setTag(on ? '' : t.key)} disabled={n === 0 && !on}
-                  style={{ ...s.tagChip, borderColor: on ? t.color : C.line,
-                    background: on ? t.color + '22' : C.bgWhite, color: on ? t.color : C.inkSub,
-                    fontWeight: on ? 700 : 500, opacity: n === 0 && !on ? 0.35 : 1 }}>
-                  {t.emoji}{t.label}<span style={{ opacity: 0.7, fontSize: '0.6875rem' }}>{n}</span>
-                </button>
-              );
-            })}
-          </div>
-        </section>
-      )}
-
-      {/* 件数・絞り込み中の条件・並び替え（スクロールしても上に残る） */}
+      {/* 操作バー（スクロールしても上に固定） */}
       <div style={s.browseBar}>
-        <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
-          <div style={{ fontFamily: FONT_DISPLAY, fontSize: '0.9375rem', fontWeight: 700 }}>
-            {postsLoading && posts.length === 0 ? '読み込み中…' : <>{results.length}<span style={{ fontSize: '0.75rem', fontWeight: 500, color: C.inkSub }}> 件</span></>}
-          </div>
-          <label style={s.sortWrap}>
-            <span style={{ fontSize: '0.75rem', color: C.inkSub }}>並び替え</span>
-            <select value={sort} onChange={(e) => setSort(e.target.value)} style={s.sortSelect}>
-              {SORTS.map(o => <option key={o.key} value={o.key}>{o.label}</option>)}
-            </select>
-          </label>
+        <div style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
+          <button onClick={openArea}
+            style={{ ...s.facetBtn, ...(area ? { background: ac, borderColor: ac, color: '#fff' } : {}) }}>
+            <span>📍</span><span style={s.facetLabel}>{areaLabel}</span><span style={{ fontSize: '0.625rem' }}>▼</span>
+          </button>
+          <button onClick={openGenre}
+            style={{ ...s.facetBtn, ...(selTags.length ? { background: C.ink, borderColor: C.ink, color: '#fff' } : {}) }}>
+            <span>🏷</span><span style={s.facetLabel}>{genreLabel}</span><span style={{ fontSize: '0.625rem' }}>▼</span>
+          </button>
+          <select value={sort} onChange={(e) => setSort(e.target.value)} aria-label="並び替え" style={s.sortSelect}>
+            {SORTS.map(o => <option key={o.key} value={o.key}>{o.label}</option>)}
+          </select>
         </div>
+
+        {/* 絞り込み中の条件（このときだけ出る） */}
         {filtering && (
-          <div style={{ display: 'flex', gap: 6, flexWrap: 'wrap', marginTop: 8, alignItems: 'center' }}>
+          <div style={s.activeRow}>
             {area && (
-              <button onClick={() => { setArea(''); setSub(''); }} style={{ ...s.activeChip, background: ac, color: '#fff', borderColor: ac }}>
+              <button onClick={() => { setArea(''); setSub(''); }} style={{ ...s.activeChip, background: ac + '18', color: ac, borderColor: ac }}>
                 📍 {area}{sub ? ` › ${sub}` : ''} ×
               </button>
             )}
-            {activeTag && (
-              <button onClick={() => setTag('')} style={{ ...s.activeChip, background: activeTag.color + '22', color: activeTag.color, borderColor: activeTag.color }}>
-                {activeTag.emoji}{activeTag.label} ×
-              </button>
-            )}
+            {selTags.map(k => {
+              const t = tagMap[k];
+              return t && (
+                <button key={k} onClick={() => setSelTags(selTags.filter(x => x !== k))}
+                  style={{ ...s.activeChip, background: t.color + '18', color: t.color, borderColor: t.color }}>
+                  🏷 {t.label} ×
+                </button>
+              );
+            })}
             {q.trim() && (
               <button onClick={() => setQ('')} style={{ ...s.activeChip, background: C.bgOff, color: C.ink, borderColor: C.line }}>
-                「{q.trim()}」 ×
+                🔍 {q.trim()} ×
               </button>
             )}
-            <button onClick={clearAll} style={s.clearAllBtn}>すべてクリア</button>
+            <button onClick={clearAll} style={s.clearAllBtn}>すべて解除</button>
           </div>
         )}
+
+        <div style={{ marginTop: 6, fontFamily: FONT_HAND, fontSize: '0.8125rem', color: C.inkSub }}>
+          {postsLoading && posts.length === 0 ? '読み込み中…'
+            : <><strong style={{ fontFamily: FONT_DISPLAY, fontSize: '0.9375rem', color: C.ink }}>{results.length}</strong> 件の投稿</>}
+        </div>
       </div>
 
       <ScrollingList
@@ -3930,17 +4076,29 @@ function CustomerBrowse({ posts, updatePost, tags, postsLoading = false, postsLo
         staticFlow
         loading={postsLoading && posts.length === 0}
         loadError={postsLoadError && posts.length === 0}
-        emptyText={emptyText}
+        emptyText={filtering ? '条件に合う投稿がありませんでした' : 'まだ投稿がありません'}
       />
 
       {filtering && results.length === 0 && !postsLoading && (
         <div style={{ textAlign: 'center', marginTop: -20, paddingBottom: 24 }}>
-          <button onClick={clearAll} style={{ ...s.clearAllBtn, fontSize: '0.875rem', padding: '8px 18px' }}>条件をクリアしてすべて表示</button>
+          <button onClick={clearAll} style={{ ...s.sheetPrimary, display: 'inline-block', width: 'auto', padding: '10px 22px' }}>
+            条件を解除してすべて表示
+          </button>
         </div>
       )}
 
       {/* 投稿ボタンに一覧の最後が隠れないよう余白 */}
       <div style={{ height: 90 }}/>
+
+      {sheet === 'area' && (
+        <AreaSheet rows={areaRows} allCount={areaBase.length} initArea={area} initSub={sub}
+          countFor={(a, sb) => areaBase.filter(p => matchArea(p, a, sb)).length}
+          onApply={(a, sb) => { setArea(a); setSub(sb); afterApply(); }} onClose={closeSheet}/>
+      )}
+      {sheet === 'genre' && (
+        <GenreSheet tags={tags} base={genreBase} init={selTags}
+          onApply={(ts) => { setSelTags(ts); afterApply(); }} onClose={closeSheet}/>
+      )}
 
       {detailPost && (
         <PostDetailModal
@@ -6623,6 +6781,34 @@ const s = {
 
   // フィルタバー
   filterBar: { borderBottom: `1px solid ${C.line}`, background: C.bgOff, flexShrink: 0 },
+  pcBar: { padding: '10px 12px', borderBottom: `1px solid ${C.line}`, background: C.bgWhite, flexShrink: 0 },
+  facetBtn: { display: 'inline-flex', alignItems: 'center', gap: 4, padding: '8px 11px', minHeight: 40, maxWidth: 150,
+    borderRadius: 999, border: `1.5px solid ${C.line}`, background: C.bgWhite, color: C.ink, cursor: 'pointer',
+    fontFamily: FONT_HAND, fontSize: '0.8125rem', fontWeight: 700 },
+  facetLabel: { overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', minWidth: 0 },
+  activeRow: { display: 'flex', gap: 6, alignItems: 'center', marginTop: 8, overflowX: 'auto', WebkitOverflowScrolling: 'touch', paddingBottom: 2 },
+  sheetOverlay: { position: 'fixed', inset: 0, zIndex: 2500, background: 'rgba(0,0,0,0.4)', display: 'flex', alignItems: 'flex-end' },
+  sheet: { width: '100%', maxHeight: '85vh', display: 'flex', flexDirection: 'column', background: C.bgWhite,
+    borderRadius: '18px 18px 0 0', boxShadow: '0 -8px 30px rgba(0,0,0,0.18)' },
+  sheetGrabber: { width: 40, height: 5, borderRadius: 3, background: C.line, margin: '8px auto 4px' },
+  sheetHead: { display: 'flex', alignItems: 'center', justifyContent: 'space-between', padding: '4px 16px 10px', borderBottom: `1px solid ${C.lineSoft}` },
+  sheetClose: { width: 34, height: 34, borderRadius: '50%', border: `1px solid ${C.line}`, background: C.bgWhite, color: C.inkSub,
+    fontSize: '1.125rem', lineHeight: 1, cursor: 'pointer' },
+  sheetBody: { flex: 1, minHeight: 0, overflowY: 'auto', overscrollBehavior: 'contain', padding: '8px 16px 12px', WebkitOverflowScrolling: 'touch' },
+  sheetFoot: { display: 'flex', gap: 10, padding: '10px 16px calc(10px + env(safe-area-inset-bottom, 0px))', borderTop: `1px solid ${C.line}`, background: C.bgWhite },
+  sheetGhost: { flex: '0 0 auto', padding: '12px 18px', borderRadius: 10, border: `1.5px solid ${C.line}`, background: C.bgWhite,
+    color: C.inkSub, fontFamily: FONT_HAND, fontSize: '0.9375rem', fontWeight: 700, cursor: 'pointer', minHeight: 48 },
+  sheetPrimary: { flex: 1, padding: '12px 18px', borderRadius: 10, border: 'none', background: C.green, color: '#fff',
+    fontFamily: FONT_DISPLAY, fontSize: '1rem', fontWeight: 700, cursor: 'pointer', minHeight: 48 },
+  radioRow: { display: 'flex', alignItems: 'center', gap: 10, width: '100%', minHeight: 48, padding: '8px 2px', border: 'none',
+    background: 'transparent', cursor: 'pointer', fontFamily: FONT_HAND, fontSize: '0.9375rem', color: C.ink, textAlign: 'left' },
+  radioRowSub: { display: 'flex', alignItems: 'center', gap: 10, width: '100%', minHeight: 44, padding: '6px 4px', border: 'none',
+    background: 'transparent', cursor: 'pointer', fontFamily: FONT_HAND, fontSize: '0.875rem', color: C.ink, textAlign: 'left' },
+  radio: { width: 18, height: 18, borderRadius: '50%', border: `2px solid ${C.line}`, flexShrink: 0, boxSizing: 'border-box' },
+  radioOn: { borderColor: C.ink, background: C.ink, boxShadow: 'inset 0 0 0 4px #fff' },
+  rowCount: { fontFamily: FONT_LATIN, fontSize: '0.8125rem', color: C.inkSub, minWidth: 24, textAlign: 'right' },
+  genreChip: { display: 'inline-flex', alignItems: 'center', gap: 3, padding: '9px 14px', minHeight: 44, borderRadius: 999,
+    border: '1.5px solid', cursor: 'pointer', fontFamily: FONT_HAND, fontSize: '0.875rem' },
   browseHeader: { display: 'flex', alignItems: 'center', gap: 8, padding: '12px 14px 10px',
     borderBottom: `2px solid ${C.green}`, background: C.bgWhite },
   browseClearX: { position: 'absolute', right: 9, top: '50%', transform: 'translateY(-50%)', border: 'none',
@@ -6644,7 +6830,7 @@ const s = {
     background: 'rgba(255,255,255,0.97)', borderTop: `1px solid ${C.line}`, borderBottom: `1px solid ${C.line}`,
     backdropFilter: 'blur(6px)', WebkitBackdropFilter: 'blur(6px)' },
   sortWrap: { marginLeft: 'auto', display: 'inline-flex', alignItems: 'center', gap: 6 },
-  sortSelect: { fontFamily: FONT_HAND, fontSize: '0.8125rem', fontWeight: 700, color: C.ink, padding: '6px 26px 6px 10px',
+  sortSelect: { marginLeft: 'auto', fontFamily: FONT_HAND, fontSize: '0.8125rem', fontWeight: 700, color: C.ink, padding: '6px 26px 6px 10px',
     borderRadius: 999, border: `1.5px solid ${C.line}`, background: C.bgWhite, minHeight: 34 },
   activeChip: { display: 'inline-flex', alignItems: 'center', gap: 3, padding: '4px 10px', borderRadius: 999,
     border: '1.5px solid', cursor: 'pointer', fontFamily: FONT_HAND, fontSize: '0.75rem', fontWeight: 700 },
