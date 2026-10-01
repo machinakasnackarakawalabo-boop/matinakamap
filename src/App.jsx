@@ -3478,7 +3478,7 @@ function ScrollingList({ posts, regionColor, onPostClick, tagMap, noAutoScroll =
                 }}>
                 <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 8, gap: 6 }}>
                   <div style={{ display: 'flex', gap: 6, flexWrap: 'wrap' }}>
-                    <span style={{ ...s.miniTag, background: regionColor }}>
+                    <span style={{ ...s.miniTag, background: typeof regionColor === 'function' ? regionColor(post) : regionColor }}>
                       {post.storeName ? `🏠 ${post.storeName}` : post.prefectureName}
                     </span>
                     {post.detail?.name && (
@@ -3686,110 +3686,245 @@ function CustomerTabs({ tab, setTab, sticky = false, isMobile = false }) {
 // =====================================
 // スマホ用：投稿の閲覧＋検索（地図なし）
 // =====================================
+// スマホ一覧で使うエリアの色と並び順（北→南。ホームの荒川区を先頭）
+const AREA_ORDER = ['荒川区', '北海道', '東北', '関東', '中部', '近畿', '中国', '四国', '九州', '沖縄', '海外'];
+const AREA_COLORS = {
+  '荒川区': '#E6007E', '北海道': '#3E8ED0', '東北': '#2BA3A3', '関東': '#D9480F', '中部': '#19A86B',
+  '近畿': '#E08E0B', '中国': '#8E6CC4', '四国': '#12A99A', '九州': '#C92A2A', '沖縄': '#0B8FC4', '海外': '#5C6B7A',
+};
+const areaColor = (r) => AREA_COLORS[r] || '#6B6B6B';
+const PREF_ORDER = Object.fromEntries(Object.values(PREFS).map((p, i) => [p.name, i]));
+
+// エリアの下の階層：荒川区は町名、海外は国、それ以外は都道府県
+const subAreaOf = (p) =>
+  p.region === '荒川区' ? (p.arakawaSubRegion || 'その他')
+  : p.region === '海外' ? (p.country || '海外')
+  : (p.prefectureName || 'その他');
+
+const SORTS = [
+  { key: 'new', label: '新しい順' },
+  { key: 'old', label: '古い順' },
+  { key: 'likes', label: 'いいねが多い順' },
+  { key: 'comments', label: 'コメントが多い順' },
+];
+
+// =====================================
+// スマホ用：投稿の閲覧＋検索（地図なし）
+// =====================================
 function CustomerBrowse({ posts, updatePost, tags, postsLoading = false, postsLoadError = false }) {
   const tagMap = useMemo(() => Object.fromEntries((tags || []).map(t => [t.key, t])), [tags]);
   const [q, setQ] = useState('');
-  const [tagFilter, setTagFilter] = useState('');
-  const [regionFilter, setRegionFilter] = useState('');
+  const [area, setArea] = useState('');
+  const [sub, setSub] = useState('');
+  const [tag, setTag] = useState('');
+  const [sort, setSort] = useState('new');
+  const [tagsOpen, setTagsOpen] = useState(false);
   const [detailPost, setDetailPost] = useState(null);
 
   // 検索対象：本文・ペンネーム・県名・お店・区やサブ地域・場所名・タグ名
   const searchIndex = useCallback((p) => [
     p.message, p.penname, p.prefectureName, p.storeName,
-    p.tokyoWard, p.arakawaSubRegion, p.aichiSubRegion,
+    p.tokyoWard, p.arakawaSubRegion, p.aichiSubRegion, p.country,
     p.detail?.name,
     ...(p.tags || []).map(k => tagMap[k]?.label || k),
   ].filter(Boolean).join(' ').toLowerCase(), [tagMap]);
 
-  // 実際に投稿がある地域だけを件数つきで出す
-  const regions = useMemo(() => {
+  const byKeyword = useMemo(() => {
+    const kw = q.trim().toLowerCase();
+    if (!kw) return posts;
+    const words = kw.split(/\s+/);   // 空白区切りはAND
+    return posts.filter(p => { const t = searchIndex(p); return words.every(w => t.includes(w)); });
+  }, [posts, q, searchIndex]);
+
+  const inArea = (p) => !area || p.region === area;
+  const inSub = (p) => !sub || subAreaOf(p) === sub;
+  const hasTag = (p) => !tag || (p.tags || []).includes(tag);
+
+  // 件数は「他の条件を当てたうえで、その項目を選んだら何件になるか」を出す
+  const areas = useMemo(() => {
     const c = new Map();
-    posts.forEach(p => { const r = p.region; if (r) c.set(r, (c.get(r) || 0) + 1); });
-    return [...c.entries()].sort((x, y) => y[1] - x[1]);
-  }, [posts]);
+    byKeyword.filter(hasTag).forEach(p => p.region && c.set(p.region, (c.get(p.region) || 0) + 1));
+    const present = new Set(posts.map(p => p.region).filter(Boolean));
+    const known = AREA_ORDER.filter(r => present.has(r));
+    const extra = [...present].filter(r => !AREA_ORDER.includes(r)).sort();
+    return [...known, ...extra].map(r => [r, c.get(r) || 0]);
+  }, [posts, byKeyword, tag]);
+
+  const subs = useMemo(() => {
+    if (!area) return [];
+    const c = new Map();
+    byKeyword.filter(p => p.region === area && hasTag(p)).forEach(p => { const k = subAreaOf(p); c.set(k, (c.get(k) || 0) + 1); });
+    const all = [...new Set(posts.filter(p => p.region === area).map(subAreaOf))];
+    all.sort((a, b) => (PREF_ORDER[a] ?? 999) - (PREF_ORDER[b] ?? 999) || a.localeCompare(b, 'ja'));
+    return all.map(k => [k, c.get(k) || 0]);
+  }, [posts, byKeyword, area, tag]);
+
+  const tagCounts = useMemo(() => {
+    const c = new Map();
+    byKeyword.filter(p => inArea(p) && inSub(p)).forEach(p => (p.tags || []).forEach(k => c.set(k, (c.get(k) || 0) + 1)));
+    return c;
+  }, [byKeyword, area, sub]);
+
+  // 件数の多い順に並べ、閉じているときは上位だけ出す（選択中のものは必ず出す）
+  const TAGS_COLLAPSED = 8;
+  const sortedTags = useMemo(() => {
+    const order = new Map((tags || []).map((t, i) => [t.key, i]));
+    return [...(tags || [])].sort((a, b) => (tagCounts.get(b.key) || 0) - (tagCounts.get(a.key) || 0) || order.get(a.key) - order.get(b.key));
+  }, [tags, tagCounts]);
+  const visibleTags = tagsOpen ? sortedTags
+    : [...sortedTags.slice(0, TAGS_COLLAPSED), ...sortedTags.slice(TAGS_COLLAPSED).filter(t => t.key === tag)];
 
   const results = useMemo(() => {
-    let list = posts;
-    if (regionFilter) list = list.filter(p => p.region === regionFilter);
-    const kw = q.trim().toLowerCase();
-    if (kw) {
-      // 空白区切りの複数語はすべて含むものを残す
-      const words = kw.split(/\s+/);
-      list = list.filter(p => { const t = searchIndex(p); return words.every(w => t.includes(w)); });
-    }
-    if (tagFilter) list = list.filter(p => (p.tags || []).includes(tagFilter));
-    return list;   // posts は新しい順で入ってくる
-  }, [posts, q, tagFilter, regionFilter, searchIndex]);
+    const list = byKeyword.filter(p => inArea(p) && inSub(p) && hasTag(p));
+    const L = (p) => (p.likes || []).length, Cm = (p) => (p.comments || []).length, T = (p) => p.timestamp || 0;
+    const cmp = {
+      new: (a, b) => T(b) - T(a),
+      old: (a, b) => T(a) - T(b),
+      likes: (a, b) => L(b) - L(a) || T(b) - T(a),
+      comments: (a, b) => Cm(b) - Cm(a) || T(b) - T(a),
+    }[sort];
+    return [...list].sort(cmp);
+  }, [byKeyword, area, sub, tag, sort]);
 
-  const searching = q.trim() !== '' || tagFilter !== '' || regionFilter !== '';
-  const emptyText = searching ? '該当する投稿が見つかりませんでした' : 'まだ投稿がありません';
+  const pickArea = (r) => { setSub(''); setArea(area === r ? '' : r); };
+  const clearAll = () => { setQ(''); setArea(''); setSub(''); setTag(''); };
+  const filtering = q.trim() !== '' || area !== '' || tag !== '';
+  const emptyText = filtering ? '該当する投稿が見つかりませんでした' : 'まだ投稿がありません';
+  const ac = area ? areaColor(area) : C.ink;
+  const activeTag = tag ? tagMap[tag] : null;
 
   return (
     <>
+      {/* ロゴ */}
+      <header style={s.browseHeader}>
+        <div style={{ ...s.monitorKanji, fontSize: 18, padding: '5px 10px', letterSpacing: 2 }}>街中</div>
+        <div style={{ ...s.monitorTitle, fontSize: 15, letterSpacing: 2 }}>MAP</div>
+        <div style={{ marginLeft: 'auto', fontFamily: FONT_HAND, fontSize: '0.75rem', color: C.inkSub, letterSpacing: 1 }}>みんなのおすすめ</div>
+      </header>
+
       {/* 検索 */}
-      <div style={{ padding: '10px 12px 0' }}>
+      <div style={{ padding: '12px 12px 0' }}>
         <div style={{ position: 'relative' }}>
-          <span style={{ position: 'absolute', left: 12, top: '50%', transform: 'translateY(-50%)', fontSize: '0.9375rem', pointerEvents: 'none' }}>🔍</span>
-          <input
-            value={q}
-            onChange={(e) => setQ(e.target.value)}
-            placeholder="お店・地名・キーワードで検索"
-            style={{ width: '100%', padding: '11px 36px 11px 36px', borderRadius: 999, border: `1.5px solid ${C.line}`,
-              fontFamily: FONT_BODY, fontSize: '1rem', outline: 'none', boxSizing: 'border-box', background: C.bgOff }}
-          />
+          <span style={{ position: 'absolute', left: 13, top: '50%', transform: 'translateY(-50%)', fontSize: '0.9375rem', pointerEvents: 'none' }}>🔍</span>
+          <input value={q} onChange={(e) => setQ(e.target.value)} placeholder="お店・地名・キーワードで検索"
+            style={{ width: '100%', padding: '11px 38px', borderRadius: 999, border: `1.5px solid ${C.line}`,
+              fontFamily: FONT_BODY, fontSize: '1rem', outline: 'none', boxSizing: 'border-box', background: C.bgOff }}/>
           {q && (
-            <button onClick={() => setQ('')} aria-label="検索をクリア"
-              style={{ position: 'absolute', right: 8, top: '50%', transform: 'translateY(-50%)', border: 'none',
-                background: C.line, color: C.ink, borderRadius: '50%', width: 22, height: 22, cursor: 'pointer', fontSize: '0.8125rem', lineHeight: 1 }}>×</button>
+            <button onClick={() => setQ('')} aria-label="検索をクリア" style={s.browseClearX}>×</button>
           )}
         </div>
       </div>
 
-      {/* 地域で絞る */}
-      {regions.length > 0 && (
-        <div style={{ display: 'flex', gap: 6, flexWrap: 'wrap', padding: '10px 12px 0' }}>
-          <button onClick={() => setRegionFilter('')}
-            style={{ ...s.browseChip, ...(regionFilter === '' ? { background: C.ink, borderColor: C.ink, color: '#fff', fontWeight: 700 } : {}) }}>
-            すべての地域
-          </button>
-          {regions.map(([r, n]) => {
-            const on = regionFilter === r;
-            const col = REGION_COLOR(r);
-            return (
-              <button key={r} onClick={() => setRegionFilter(on ? '' : r)}
-                style={{ ...s.browseChip, borderColor: on ? col : C.line,
-                  background: on ? col : C.bgWhite, color: on ? '#fff' : C.inkSub, fontWeight: on ? 700 : 500 }}>
-                {r} {n}
-              </button>
-            );
-          })}
-        </div>
+      {/* エリア */}
+      {areas.length > 0 && (
+        <section style={{ padding: '14px 12px 0' }}>
+          <div style={s.browseLabel}><span>📍 エリア</span><span style={s.browseLabelHint}>タップで絞り込み</span></div>
+          <div style={s.browseRow}>
+            {areas.map(([r, n]) => {
+              const on = area === r, col = areaColor(r);
+              return (
+                <button key={r} onClick={() => pickArea(r)} disabled={n === 0 && !on}
+                  style={{ ...s.areaChip, borderColor: col, background: on ? col : C.bgWhite,
+                    color: on ? '#fff' : C.ink, opacity: n === 0 && !on ? 0.35 : 1 }}>
+                  {!on && <span style={{ width: 8, height: 8, borderRadius: '50%', background: col, flexShrink: 0 }}/>}
+                  {r}<span style={{ opacity: 0.75, fontWeight: 500 }}>{n}</span>
+                </button>
+              );
+            })}
+          </div>
+
+          {/* エリアの中の県（荒川区は町名） */}
+          {area && subs.length > 1 && (
+            <div style={{ ...s.subPanel, borderLeftColor: ac, background: ac + '10' }}>
+              <div style={{ fontFamily: FONT_HAND, fontSize: '0.6875rem', color: ac, fontWeight: 700, marginBottom: 6 }}>
+                {area === '荒川区' ? '町名で絞り込み' : area === '海外' ? '国で絞り込み' : `${area}の中で絞り込み`}
+              </div>
+              <div style={s.browseRow}>
+                <button onClick={() => setSub('')}
+                  style={{ ...s.subChip, borderColor: ac, background: !sub ? ac : C.bgWhite, color: !sub ? '#fff' : ac }}>
+                  すべて
+                </button>
+                {subs.map(([k, n]) => {
+                  const on = sub === k;
+                  return (
+                    <button key={k} onClick={() => setSub(on ? '' : k)} disabled={n === 0 && !on}
+                      style={{ ...s.subChip, borderColor: ac, background: on ? ac : C.bgWhite, color: on ? '#fff' : ac,
+                        opacity: n === 0 && !on ? 0.35 : 1 }}>
+                      {k}<span style={{ opacity: 0.75, fontWeight: 500 }}>{n}</span>
+                    </button>
+                  );
+                })}
+              </div>
+            </div>
+          )}
+        </section>
       )}
 
-      {/* タグで絞る（折り返して全部表示） */}
-      {(tags || []).length > 0 && (
-        <div style={{ display: 'flex', gap: 6, flexWrap: 'wrap', padding: '10px 12px 0' }}>
-          {(tags || []).map(t => {
-            const on = tagFilter === t.key;
-            return (
-              <button key={t.key} onClick={() => setTagFilter(on ? '' : t.key)}
-                style={{ ...s.browseChip, fontWeight: on ? 700 : 500,
-                  borderColor: on ? t.color : C.line,
-                  background: on ? t.color + '22' : C.bgWhite, color: on ? t.color : C.inkSub }}>
-                {t.emoji}{t.label}
+      {/* ジャンル（タグ） */}
+      {sortedTags.length > 0 && (
+        <section style={{ padding: '14px 12px 0' }}>
+          <div style={s.browseLabel}>
+            <span>🏷 ジャンル</span>
+            {sortedTags.length > TAGS_COLLAPSED && (
+              <button onClick={() => setTagsOpen(v => !v)} style={s.browseMore}>
+                {tagsOpen ? '閉じる ▴' : `すべて表示（${sortedTags.length}）▾`}
               </button>
-            );
-          })}
-        </div>
+            )}
+          </div>
+          <div style={s.browseRow}>
+            {visibleTags.map(t => {
+              const on = tag === t.key, n = tagCounts.get(t.key) || 0;
+              return (
+                <button key={t.key} onClick={() => setTag(on ? '' : t.key)} disabled={n === 0 && !on}
+                  style={{ ...s.tagChip, borderColor: on ? t.color : C.line,
+                    background: on ? t.color + '22' : C.bgWhite, color: on ? t.color : C.inkSub,
+                    fontWeight: on ? 700 : 500, opacity: n === 0 && !on ? 0.35 : 1 }}>
+                  {t.emoji}{t.label}<span style={{ opacity: 0.7, fontSize: '0.6875rem' }}>{n}</span>
+                </button>
+              );
+            })}
+          </div>
+        </section>
       )}
 
-      <div style={{ padding: '8px 16px 0', fontFamily: FONT_HAND, fontSize: '0.75rem', color: C.inkSub }}>
-        {postsLoading && posts.length === 0 ? '読み込み中…' : `${results.length} 件`}
+      {/* 件数・絞り込み中の条件・並び替え（スクロールしても上に残る） */}
+      <div style={s.browseBar}>
+        <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
+          <div style={{ fontFamily: FONT_DISPLAY, fontSize: '0.9375rem', fontWeight: 700 }}>
+            {postsLoading && posts.length === 0 ? '読み込み中…' : <>{results.length}<span style={{ fontSize: '0.75rem', fontWeight: 500, color: C.inkSub }}> 件</span></>}
+          </div>
+          <label style={s.sortWrap}>
+            <span style={{ fontSize: '0.75rem', color: C.inkSub }}>並び替え</span>
+            <select value={sort} onChange={(e) => setSort(e.target.value)} style={s.sortSelect}>
+              {SORTS.map(o => <option key={o.key} value={o.key}>{o.label}</option>)}
+            </select>
+          </label>
+        </div>
+        {filtering && (
+          <div style={{ display: 'flex', gap: 6, flexWrap: 'wrap', marginTop: 8, alignItems: 'center' }}>
+            {area && (
+              <button onClick={() => { setArea(''); setSub(''); }} style={{ ...s.activeChip, background: ac, color: '#fff', borderColor: ac }}>
+                📍 {area}{sub ? ` › ${sub}` : ''} ×
+              </button>
+            )}
+            {activeTag && (
+              <button onClick={() => setTag('')} style={{ ...s.activeChip, background: activeTag.color + '22', color: activeTag.color, borderColor: activeTag.color }}>
+                {activeTag.emoji}{activeTag.label} ×
+              </button>
+            )}
+            {q.trim() && (
+              <button onClick={() => setQ('')} style={{ ...s.activeChip, background: C.bgOff, color: C.ink, borderColor: C.line }}>
+                「{q.trim()}」 ×
+              </button>
+            )}
+            <button onClick={clearAll} style={s.clearAllBtn}>すべてクリア</button>
+          </div>
+        )}
       </div>
 
       <ScrollingList
         posts={results}
-        regionColor={C.green}
+        regionColor={(p) => areaColor(p.region)}
         onPostClick={setDetailPost}
         tagMap={tagMap}
         staticFlow
@@ -3797,6 +3932,15 @@ function CustomerBrowse({ posts, updatePost, tags, postsLoading = false, postsLo
         loadError={postsLoadError && posts.length === 0}
         emptyText={emptyText}
       />
+
+      {filtering && results.length === 0 && !postsLoading && (
+        <div style={{ textAlign: 'center', marginTop: -20, paddingBottom: 24 }}>
+          <button onClick={clearAll} style={{ ...s.clearAllBtn, fontSize: '0.875rem', padding: '8px 18px' }}>条件をクリアしてすべて表示</button>
+        </div>
+      )}
+
+      {/* 投稿ボタンに一覧の最後が隠れないよう余白 */}
+      <div style={{ height: 90 }}/>
 
       {detailPost && (
         <PostDetailModal
@@ -6479,6 +6623,33 @@ const s = {
 
   // フィルタバー
   filterBar: { borderBottom: `1px solid ${C.line}`, background: C.bgOff, flexShrink: 0 },
+  browseHeader: { display: 'flex', alignItems: 'center', gap: 8, padding: '12px 14px 10px',
+    borderBottom: `2px solid ${C.green}`, background: C.bgWhite },
+  browseClearX: { position: 'absolute', right: 9, top: '50%', transform: 'translateY(-50%)', border: 'none',
+    background: C.line, color: C.ink, borderRadius: '50%', width: 24, height: 24, cursor: 'pointer', fontSize: '0.875rem', lineHeight: 1 },
+  browseLabel: { display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: 8,
+    fontFamily: FONT_DISPLAY, fontSize: '0.8125rem', fontWeight: 700, letterSpacing: 1, color: C.ink },
+  browseLabelHint: { fontFamily: FONT_HAND, fontSize: '0.6875rem', fontWeight: 500, color: C.inkLight, letterSpacing: 0 },
+  browseMore: { border: 'none', background: 'none', color: C.green, fontFamily: FONT_HAND, fontSize: '0.75rem', fontWeight: 700, cursor: 'pointer', padding: '2px 0' },
+  browseRow: { display: 'flex', gap: 6, flexWrap: 'wrap' },
+  // エリア：角丸の四角＋色の点。ジャンル（丸いピル）と形で見分けられるようにする
+  areaChip: { display: 'inline-flex', alignItems: 'center', gap: 5, padding: '7px 11px', minHeight: 36, borderRadius: 8,
+    border: '1.5px solid', cursor: 'pointer', fontFamily: FONT_HAND, fontSize: '0.8125rem', fontWeight: 700, whiteSpace: 'nowrap' },
+  subPanel: { marginTop: 10, padding: '10px 10px 10px 12px', borderLeft: '4px solid', borderRadius: 8 },
+  subChip: { display: 'inline-flex', alignItems: 'center', gap: 4, padding: '6px 10px', minHeight: 34, borderRadius: 8,
+    border: '1.5px solid', cursor: 'pointer', fontFamily: FONT_HAND, fontSize: '0.8125rem', fontWeight: 700, whiteSpace: 'nowrap' },
+  tagChip: { display: 'inline-flex', alignItems: 'center', gap: 3, padding: '6px 12px', minHeight: 34, borderRadius: 999,
+    border: '1.5px solid', cursor: 'pointer', fontFamily: FONT_HAND, fontSize: '0.8125rem', whiteSpace: 'nowrap' },
+  browseBar: { position: 'sticky', top: 0, zIndex: 15, marginTop: 14, padding: '10px 14px',
+    background: 'rgba(255,255,255,0.97)', borderTop: `1px solid ${C.line}`, borderBottom: `1px solid ${C.line}`,
+    backdropFilter: 'blur(6px)', WebkitBackdropFilter: 'blur(6px)' },
+  sortWrap: { marginLeft: 'auto', display: 'inline-flex', alignItems: 'center', gap: 6 },
+  sortSelect: { fontFamily: FONT_HAND, fontSize: '0.8125rem', fontWeight: 700, color: C.ink, padding: '6px 26px 6px 10px',
+    borderRadius: 999, border: `1.5px solid ${C.line}`, background: C.bgWhite, minHeight: 34 },
+  activeChip: { display: 'inline-flex', alignItems: 'center', gap: 3, padding: '4px 10px', borderRadius: 999,
+    border: '1.5px solid', cursor: 'pointer', fontFamily: FONT_HAND, fontSize: '0.75rem', fontWeight: 700 },
+  clearAllBtn: { border: 'none', background: 'none', color: C.pink, fontFamily: FONT_HAND, fontSize: '0.75rem',
+    fontWeight: 700, cursor: 'pointer', textDecoration: 'underline', padding: '4px 2px' },
   browseChip: { padding: '5px 11px', borderRadius: 999, cursor: 'pointer', border: `1.5px solid ${C.line}`,
     fontFamily: FONT_HAND, fontSize: '0.8125rem', lineHeight: 1.4, whiteSpace: 'nowrap' },
   listTabs: { display: 'flex', gap: 4, padding: 6, borderBottom: `1px solid ${C.line}`, background: C.bgWhite, flexShrink: 0 },
