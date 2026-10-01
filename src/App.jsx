@@ -330,7 +330,12 @@ function usePosts() {
 
   const setFromMap = (map) => {
     postsMapRef.current = map;
-    safeSave(KEYS.posts, map);
+    // 写真まで含めると数十MBになり、毎回の文字列化で重くなるうえ localStorage の上限で保存自体も失敗する。
+    // 端末に残すのは写真以外だけにする（次回の表示が速くなる）。
+    safeSave(KEYS.posts, Object.fromEntries(Object.entries(map).map(([k, v]) => {
+      const { photo, photos, ...rest } = v || {};
+      return [k, rest];
+    })));
     setPosts(Object.values(map).sort((a, b) => b.timestamp - a.timestamp));
   };
 
@@ -343,7 +348,7 @@ function usePosts() {
     // select('data') で一括取得すると数十秒かかり、Supabaseのタイムアウトに当たると
     // 途中で切れて投稿数が欠ける。そこで2段階に分ける：
     //   1) 写真以外だけ取得して即座に一覧を出す（約0.1MB）
-    //   2) 写真は新しい順に少しずつ後追いで取得してマージする
+    //   2) 写真は画面に入った投稿の分だけ requestPhotos で取得する（下で定義）
     const run = async () => {
       // --- 1段目：軽いフィールドだけ ---
       const { data: light, error } = await supabase
@@ -364,24 +369,6 @@ function usePosts() {
       setFromMap(map);
       setLoading(false);
 
-      // --- 2段目：写真を新しい順に分割取得 ---
-      const ids = light.map(r => r.id).filter(Boolean);
-      const CHUNK = 8;
-      for (let i = 0; i < ids.length; i += CHUNK) {
-        if (!mounted) return;
-        const part = ids.slice(i, i + CHUNK);
-        const { data: pics } = await supabase
-          .from('posts')
-          .select('id,data->photo,data->photos')
-          .in('id', part);
-        if (!mounted || !pics) continue;
-        const next = { ...postsMapRef.current };
-        pics.forEach(r => {
-          if (!next[r.id]) return;
-          next[r.id] = { ...next[r.id], photo: r.photo || null, photos: r.photos || null };
-        });
-        setFromMap(next);
-      }
     };
     run().catch(() => { if (mounted) { setLoadError(true); setLoading(false); } });
 
@@ -435,6 +422,81 @@ function usePosts() {
     if (supabase && ids.length > 0) sb(() => supabase.from('posts').delete().in('id', ids));
   }, []);
 
+  // --- 写真は必要になった投稿の分だけ取る ---
+  // 一覧のカードは1枚目（photo）だけ、詳細を開いたら全部（photos）。
+  // 画面に入ったカードから順に頼まれるので、最初のページの写真が先に出る。
+  const photoQueue = useRef({ cover: new Set(), full: new Set() });
+  const photoBusy = useRef(new Set());
+  const photoTimer = useRef(null);
+
+  // 1枚目の写真は1件あたり約200KBある。まとめて取ると全部届くまで1枚も出ないので、
+  // 1件ずつに分けて2本同時に取り、届いた分から順に表示する（並び順の先頭から）。
+  // 同時に取りすぎると回線を分け合って一番上の写真まで遅くなるので2本にとどめる。
+  const fetchPhotos = async (ids, full) => {
+    const sel = full ? 'id,data->photo,data->photos' : 'id,data->photo';
+    const size = 1;
+    const chunks = [];
+    for (let i = 0; i < ids.length; i += size) chunks.push(ids.slice(i, i + size));
+    let cursor = 0;
+    const worker = async () => {
+      while (cursor < chunks.length) {
+        const part = chunks[cursor++];
+        let data = null;
+        try { ({ data } = await supabase.from('posts').select(sel).in('id', part)); } catch {}
+        part.forEach(id => photoBusy.current.delete(`${full ? 'full' : 'cover'}:${id}`));
+        if (!data) continue;   // 失敗した分は、次に画面に入ったときに取り直す
+        const next = { ...postsMapRef.current };
+        data.forEach(r => {
+          if (!next[r.id]) return;
+          next[r.id] = full
+            ? { ...next[r.id], photo: r.photo ?? null, photos: r.photos ?? null }
+            : { ...next[r.id], photo: r.photo ?? null };
+        });
+        setFromMap(next);
+      }
+    };
+    await Promise.all(Array.from({ length: Math.min(2, chunks.length) }, worker));
+  };
+
+  const requestPhotos = useCallback((ids, full = false) => {
+    if (!supabase) return;
+    const mode = full ? 'full' : 'cover';
+    ids.forEach(id => {
+      const p = postsMapRef.current[id];
+      if (!p) return;
+      if (full ? p.photos !== undefined : p.photo !== undefined) return;   // 取得済み
+      const key = `${mode}:${id}`;
+      if (photoBusy.current.has(key)) return;                             // 取得中
+      photoBusy.current.add(key);
+      photoQueue.current[mode].add(id);
+    });
+    if (!photoTimer.current) {
+      photoTimer.current = setTimeout(() => {
+        photoTimer.current = null;
+        const q = photoQueue.current;
+        const full = [...q.full]; q.full.clear();
+        const cover = [...q.cover]; q.cover.clear();
+        // 全部取る投稿は1枚目もそこで取れるので、1枚目だけの取得は省く
+        const coverOnly = cover.filter(id => !full.includes(id));
+        cover.filter(id => full.includes(id)).forEach(id => photoBusy.current.delete(`cover:${id}`));
+        if (full.length) fetchPhotos(full, true);
+        if (coverOnly.length) fetchPhotos(coverOnly, false);
+      }, 30);
+    }
+  }, []);
+
+  // 管理画面の編集など、写真をすべて揃えてから扱う必要がある場面用
+  const loadPhotosNow = useCallback(async (id) => {
+    const p = postsMapRef.current[id];
+    if (!supabase || !p || p.photos !== undefined) return p;
+    const { data, error } = await supabase.from('posts').select('id,data->photo,data->photos').eq('id', id).maybeSingle();
+    if (error) throw error;
+    const next = { ...postsMapRef.current };
+    next[id] = { ...next[id], photo: data?.photo ?? null, photos: data?.photos ?? null };
+    setFromMap(next);
+    return next[id];
+  }, []);
+
   const updatePost = useCallback(async (id, updater) => {
     const map = { ...postsMapRef.current };
     if (!map[id]) return new Error(`投稿が見つかりません: ${id}`);
@@ -467,7 +529,7 @@ function usePosts() {
     return null;
   }, []);
 
-  return { posts, addPost, removePost, removeAllPosts, updatePost, loading, loadError };
+  return { posts, addPost, removePost, removeAllPosts, updatePost, loading, loadError, requestPhotos, loadPhotosNow };
 }
 
 function useStores() {
@@ -1640,7 +1702,7 @@ function useIsMobile(breakpoint = 767) {
 }
 
 // mobile: 縦積みレイアウト / allowPinEdit: ピン調整UIの表示（お客様モードでは false）
-function MapView({ posts, addPost, updatePost, stores, tags, settings, updateSettings, mobile = false, allowPinEdit = true, embedded = false, postsLoading = false, postsLoadError = false }) {
+function MapView({ posts, addPost, updatePost, stores, tags, settings, updateSettings, mobile = false, allowPinEdit = true, embedded = false, postsLoading = false, postsLoadError = false, requestPhotos }) {
   const tagMap = useMemo(() => Object.fromEntries((tags || []).map(t => [t.key, t])), [tags]);
   const [showForm, setShowForm] = useState(false);
   const [detailPost, setDetailPost] = useState(null);  // 投稿詳細モーダル
@@ -1923,6 +1985,9 @@ function MapView({ posts, addPost, updatePost, stores, tags, settings, updateSet
     () => regionBase.filter(p => matchSub(p) && (!featuredOnly || p.featured)),
     [regionBase, currentRegion, subFilter, featuredOnly]);
   const closeListSheet = useCallback(() => setSheet(null), []);
+
+  // 一覧は自動で流れて次々に画面に入るので、並び順どおりにカバー写真を先読みしておく
+  useEffect(() => { requestPhotos?.(listPosts.map(p => p.id)); }, [listPosts]);
 
   // ピンで選んだら、その地域でスライドショーを止める（選んだ条件が次の地域で消えないように）
   const holdRegion = () => { setSlideshow(false); setPinnedRegion(currentRegion); };
@@ -2242,7 +2307,7 @@ function MapView({ posts, addPost, updatePost, stores, tags, settings, updateSet
             </div>
           </div>
 
-          <ScrollingList posts={listPosts} regionColor={(p) => areaColor(p.region)} onPostClick={setDetailPost} tagMap={tagMap} staticFlow={mobile}
+          <ScrollingList posts={listPosts} regionColor={(p) => areaColor(p.region)} onPostClick={setDetailPost} tagMap={tagMap} staticFlow={mobile} onNeedPhotos={requestPhotos}
             loading={postsLoading && posts.length === 0} loadError={postsLoadError && posts.length === 0}
             emptyText={listEmptyText}/>
         </aside>
@@ -2265,6 +2330,7 @@ function MapView({ posts, addPost, updatePost, stores, tags, settings, updateSet
           post={posts.find(p => p.id === detailPost.id) || detailPost}
           updatePost={updatePost}
           tagMap={tagMap}
+          requestPhotos={requestPhotos}
           onClose={() => setDetailPost(null)}
         />
       )}
@@ -3163,7 +3229,8 @@ function PhotoGallery({ photos, onSlideChange }) {
   );
 }
 
-function PostDetailModal({ post, updatePost, tagMap, onClose }) {
+function PostDetailModal({ post, updatePost, tagMap, onClose, requestPhotos }) {
+  useEffect(() => { requestPhotos?.([post.id], true); }, [post.id]);
   const [commentName, setCommentName] = useState('');
   const [commentText, setCommentText] = useState('');
   const [likeName, setLikeName] = useState('');
@@ -3245,9 +3312,19 @@ function PostDetailModal({ post, updatePost, tagMap, onClose }) {
         )}
 
         {(() => {
+          if (requestPhotos && post.photo === undefined) {
+            return <div style={{ ...s.photoSkeleton, height: 220, marginBottom: 12 }}>📷 写真を読み込み中…</div>;
+          }
           const list = (post.photos && post.photos.length > 0) ? post.photos : (post.photo ? [post.photo] : []);
           if (list.length === 0) return null;
-          return <div style={{ marginBottom: 12 }}><PhotoGallery photos={list}/></div>;
+          return (
+            <div style={{ marginBottom: 12 }}>
+              <PhotoGallery photos={list}/>
+              {requestPhotos && post.photos === undefined && (
+                <div style={{ fontFamily: FONT_HAND, fontSize: '0.75rem', color: C.inkSub, marginTop: 6 }}>ほかの写真を読み込み中…</div>
+              )}
+            </div>
+          );
         })()}
 
         <div style={{ fontFamily: FONT_HAND, fontSize: '1rem', lineHeight: 1.7, color: C.ink, marginBottom: 8 }}>{post.message}</div>
@@ -3369,7 +3446,22 @@ function LoadingNote({ error = false }) {
   );
 }
 
-function ScrollingList({ posts, regionColor, onPostClick, tagMap, noAutoScroll = false, staticFlow = false, loading = false, loadError = false, emptyText = 'まだ投稿がありません' }) {
+function ScrollingList({ posts, regionColor, onPostClick, tagMap, noAutoScroll = false, staticFlow = false, loading = false, loadError = false, emptyText = 'まだ投稿がありません', onNeedPhotos }) {
+  // 画面に近づいたカードの写真を取りに行く（先読みのため少し手前から）
+  const ioRef = useRef(null);
+  const needRef = useRef(onNeedPhotos);
+  needRef.current = onNeedPhotos;
+  const observeCard = useCallback((el) => {
+    if (!el || !needRef.current || typeof IntersectionObserver === 'undefined') return;
+    if (!ioRef.current) {
+      ioRef.current = new IntersectionObserver((entries) => {
+        const ids = entries.filter(e => e.isIntersecting).map(e => e.target.dataset.pid).filter(Boolean);
+        if (ids.length) needRef.current?.(ids);
+      }, { rootMargin: '800px 0px' });
+    }
+    ioRef.current.observe(el);
+  }, []);
+  useEffect(() => () => ioRef.current?.disconnect(), []);
   const contentRef = useRef(null);
   const viewportRef = useRef(null);
   const offsetRef = useRef(0);              // 現在の縦オフセット（px、見た目用）
@@ -3536,7 +3628,7 @@ function ScrollingList({ posts, regionColor, onPostClick, tagMap, noAutoScroll =
             const likeCount = (post.likes || []).length;
             const commentCount = (post.comments || []).length;
             return (
-              <div key={`${post.id}_${idx}`}
+              <div key={`${post.id}_${idx}`} ref={observeCard} data-pid={post.id}
                 onClick={() => onPostClick && onPostClick(post)}
                 style={{
                   ...s.miniPostit,
@@ -3569,6 +3661,10 @@ function ScrollingList({ posts, regionColor, onPostClick, tagMap, noAutoScroll =
 
                 {/* 写真表示（1枚目のみ・複数枚はバッジで表示） */}
                 {(() => {
+                  // まだ取得していない写真は、読み込み中と分かる枠を出す
+                  if (onNeedPhotos && post.photo === undefined) {
+                    return <div style={{ ...s.photoSkeleton, marginBottom: 10 }}>📷 写真を読み込み中…</div>;
+                  }
                   const list = (post.photos && post.photos.length > 0) ? post.photos : (post.photo ? [post.photo] : []);
                   if (list.length === 0) return null;
                   return (
@@ -3937,7 +4033,7 @@ function sortPosts(list, sort) {
 // 調査レポート「スマホ 絞り込み UI 設計」の推奨案：
 //   初期表示は「エリア▼」「ジャンル▼」「並び替え」と件数だけ。県とタグはシートの中へ。
 // =====================================
-function CustomerBrowse({ posts, updatePost, tags, postsLoading = false, postsLoadError = false }) {
+function CustomerBrowse({ posts, updatePost, tags, postsLoading = false, postsLoadError = false, requestPhotos }) {
   const tagMap = useMemo(() => Object.fromEntries((tags || []).map(t => [t.key, t])), [tags]);
   const [q, setQ] = useState('');
   const [area, setArea] = useState('');
@@ -3993,6 +4089,9 @@ function CustomerBrowse({ posts, updatePost, tags, postsLoading = false, postsLo
   const closeSheet = useCallback(() => setSheet(null), []);
   const afterApply = () => { setSheet(null); window.scrollTo({ top: 0, behavior: 'smooth' }); };
   const clearAll = () => { setQ(''); setArea(''); setSub(''); setSelTags([]); };
+
+  // 最初に見える10件ぶんの写真を先に取りに行く（それ以降はスクロールで画面に近づいたら）
+  useEffect(() => { requestPhotos?.(results.slice(0, 10).map(p => p.id)); }, [results]);
 
   const areaLabel = area ? `${area}${sub ? `›${sub}` : ''}` : 'エリア';
   const genreLabel = selTags.length === 0 ? 'ジャンル'
@@ -4074,6 +4173,7 @@ function CustomerBrowse({ posts, updatePost, tags, postsLoading = false, postsLo
         onPostClick={setDetailPost}
         tagMap={tagMap}
         staticFlow
+        onNeedPhotos={requestPhotos}
         loading={postsLoading && posts.length === 0}
         loadError={postsLoadError && posts.length === 0}
         emptyText={filtering ? '条件に合う投稿がありませんでした' : 'まだ投稿がありません'}
@@ -4105,6 +4205,7 @@ function CustomerBrowse({ posts, updatePost, tags, postsLoading = false, postsLo
           post={posts.find(p => p.id === detailPost.id) || detailPost}
           updatePost={updatePost}
           tagMap={tagMap}
+          requestPhotos={requestPhotos}
           onClose={() => setDetailPost(null)}
         />
       )}
@@ -4112,7 +4213,7 @@ function CustomerBrowse({ posts, updatePost, tags, postsLoading = false, postsLo
   );
 }
 
-function CustomerPostPage({ posts, addPost, updatePost, stores, tags, settings, postsLoading = false, postsLoadError = false }) {
+function CustomerPostPage({ posts, addPost, updatePost, stores, tags, settings, postsLoading = false, postsLoadError = false, requestPhotos }) {
   const [postDone, setPostDone] = useState(false);
   const [formKey, setFormKey] = useState(0); // フォームリセット用
   const [tab, setTab] = useState('map');     // 一覧（投稿を見る）がメイン。投稿は右下のボタンから
@@ -4147,7 +4248,7 @@ function CustomerPostPage({ posts, addPost, updatePost, stores, tags, settings, 
           /* スマホは地図を出さず、投稿の閲覧と検索に絞る */
           <CustomerBrowse
             posts={posts} updatePost={updatePost} tags={tags}
-            postsLoading={postsLoading} postsLoadError={postsLoadError}
+            postsLoading={postsLoading} postsLoadError={postsLoadError} requestPhotos={requestPhotos}
           />
         ) : (
           <div style={{ flex: 1, minHeight: 0 }}>
@@ -4156,7 +4257,7 @@ function CustomerPostPage({ posts, addPost, updatePost, stores, tags, settings, 
               stores={stores} tags={tags}
               settings={settings} updateSettings={() => {}}
               mobile={false} allowPinEdit={false} embedded
-              postsLoading={postsLoading} postsLoadError={postsLoadError}
+              postsLoading={postsLoading} postsLoadError={postsLoadError} requestPhotos={requestPhotos}
             />
           </div>
         )}
@@ -4273,7 +4374,7 @@ function AdminLoginScreen({ settings, onLogin }) {
 // =====================================
 // 管理画面
 // =====================================
-function AdminScreen({ posts, removePost, removeAllPosts, updatePost, stores, saveStore, deleteStore, settings, updateSettings, events, eventsCtrl, wants, wantsCtrl, cityHopes, cityHopesCtrl, gifts, saveGift, deleteGift, tags, addTag, updateTag, deleteTag, moveTag }) {
+function AdminScreen({ posts, removePost, removeAllPosts, updatePost, requestPhotos, loadPhotosNow, stores, saveStore, deleteStore, settings, updateSettings, events, eventsCtrl, wants, wantsCtrl, cityHopes, cityHopesCtrl, gifts, saveGift, deleteGift, tags, addTag, updateTag, deleteTag, moveTag }) {
   const [tab, setTab] = useState('posts');
 
   const boardCount = events.length + wants.length + cityHopes.length;
@@ -4306,7 +4407,7 @@ function AdminScreen({ posts, removePost, removeAllPosts, updatePost, stores, sa
         ))}
       </div>
 
-      {tab === 'posts' && <PostsTab posts={posts} removePost={removePost} removeAllPosts={removeAllPosts} updatePost={updatePost} stores={stores}/>}
+      {tab === 'posts' && <PostsTab posts={posts} removePost={removePost} removeAllPosts={removeAllPosts} updatePost={updatePost} stores={stores} requestPhotos={requestPhotos} loadPhotosNow={loadPhotosNow}/>}
       {tab === 'board' && <BoardAdminTab events={events} eventsCtrl={eventsCtrl} wants={wants} wantsCtrl={wantsCtrl} cityHopes={cityHopes} cityHopesCtrl={cityHopesCtrl}/>}
       {tab === 'gifts' && <GiftsAdminTab gifts={gifts} saveGift={saveGift} deleteGift={deleteGift}/>}
       {tab === 'tags' && <TagsAdminTab tags={tags} addTag={addTag} updateTag={updateTag} deleteTag={deleteTag} moveTag={moveTag}/>}
@@ -4720,7 +4821,9 @@ function TagEditModal({ tag, isNew, existingKeys, onSave, onCancel }) {
   );
 }
 
-function PostsTab({ posts, removePost, removeAllPosts, updatePost, stores }) {
+function PostsTab({ posts, removePost, removeAllPosts, updatePost, stores, requestPhotos, loadPhotosNow }) {
+  // 一覧のサムネイル用に1枚目の写真を取っておく
+  useEffect(() => { requestPhotos?.(posts.map(p => p.id)); }, [posts.length]);
   const [filter, setFilter] = useState('');
   const [confirmId, setConfirmId] = useState(null);
   const [confirmAll, setConfirmAll] = useState(false);
@@ -4736,7 +4839,16 @@ function PostsTab({ posts, removePost, removeAllPosts, updatePost, stores }) {
     return `${d.getFullYear()}-${pad(d.getMonth()+1)}-${pad(d.getDate())}T${pad(d.getHours())}:${pad(d.getMinutes())}`;
   };
 
-  const startEdit = (post) => {
+  const startEdit = async (post) => {
+    // 写真が揃っていない状態で編集・保存すると写真が消えるので、先に全部取得する
+    if (post.photos === undefined && loadPhotosNow) {
+      try { post = (await loadPhotosNow(post.id)) || post; }
+      catch (e) { alert('写真の読み込みに失敗しました。通信を確認して、もう一度お試しください。'); return; }
+    }
+    if (post.photos === undefined && post.photo === undefined) {
+      alert('写真の読み込みが終わっていません。少し待ってからもう一度お試しください。');
+      return;
+    }
     setEditingPost(post.id);
     setEditForm({
       penname:    post.penname    || '',
@@ -6405,7 +6517,7 @@ export default function App() {
   const [adminLoggedIn, setAdminLoggedIn] = useState(false);
   const [tabPos, setTabPos] = useState(null); // null = デフォルト位置（右上固定）
   const tabDragOffset = useRef(null);
-  const { posts, addPost, removePost, removeAllPosts, updatePost, loading: postsLoading, loadError: postsLoadError } = usePosts();
+  const { posts, addPost, removePost, removeAllPosts, updatePost, loading: postsLoading, loadError: postsLoadError, requestPhotos, loadPhotosNow } = usePosts();
   const { stores, saveStore, deleteStore } = useStores();
   const { settings, updateSettings } = useSettings();
   // 掲示板3機能
@@ -6473,7 +6585,7 @@ export default function App() {
 
   // お客様モード：フォームのみ表示
   if (isCustomer) {
-    return <CustomerPostPage posts={posts} addPost={addPost} updatePost={updatePost} stores={stores} tags={tags} settings={settings} postsLoading={postsLoading} postsLoadError={postsLoadError}/>;
+    return <CustomerPostPage posts={posts} addPost={addPost} updatePost={updatePost} stores={stores} tags={tags} settings={settings} postsLoading={postsLoading} postsLoadError={postsLoadError} requestPhotos={requestPhotos}/>;
   }
 
   // 管理タブ選択中かつ未ログイン → ログイン画面
@@ -6514,7 +6626,7 @@ export default function App() {
         )}
       </div>
 
-      {view === 'map' && <MapView posts={posts} addPost={addPost} updatePost={updatePost} stores={stores} tags={tags} settings={settings} updateSettings={updateSettings} postsLoading={postsLoading} postsLoadError={postsLoadError}/>}
+      {view === 'map' && <MapView posts={posts} addPost={addPost} updatePost={updatePost} stores={stores} tags={tags} settings={settings} updateSettings={updateSettings} postsLoading={postsLoading} postsLoadError={postsLoadError} requestPhotos={requestPhotos}/>}
       {view === 'board' && (
         <BoardScreen
           events={eventsCtrl.items} eventsCtrl={eventsCtrl}
@@ -6532,6 +6644,8 @@ export default function App() {
           removePost={removePost}
           removeAllPosts={removeAllPosts}
           updatePost={updatePost}
+          requestPhotos={requestPhotos}
+          loadPhotosNow={loadPhotosNow}
           stores={stores}
           saveStore={saveStore}
           deleteStore={deleteStore}
@@ -6781,6 +6895,10 @@ const s = {
 
   // フィルタバー
   filterBar: { borderBottom: `1px solid ${C.line}`, background: C.bgOff, flexShrink: 0 },
+  photoSkeleton: { height: 170, borderRadius: 8, display: 'flex', alignItems: 'center', justifyContent: 'center',
+    fontFamily: FONT_HAND, fontSize: '0.8125rem', color: C.inkSub,
+    background: `linear-gradient(90deg, ${C.bgGray} 25%, ${C.bgOff} 50%, ${C.bgGray} 75%)`, backgroundSize: '200% 100%',
+    animation: 'mnshimmer 1.4s ease-in-out infinite' },
   pcBar: { padding: '10px 12px', borderBottom: `1px solid ${C.line}`, background: C.bgWhite, flexShrink: 0 },
   facetBtn: { display: 'inline-flex', alignItems: 'center', gap: 4, padding: '8px 11px', minHeight: 40, maxWidth: 150,
     borderRadius: 999, border: `1.5px solid ${C.line}`, background: C.bgWhite, color: C.ink, cursor: 'pointer',
@@ -7123,6 +7241,7 @@ if (typeof document !== 'undefined' && !document.getElementById('mn-global-style
     @supports (height: 100svh) { .mn-screen { height: 100svh; } }
     @keyframes pulse { 0%, 100% { opacity: 1; transform: scale(1); } 50% { opacity: 0.4; transform: scale(1.3); } }
     @keyframes mnspin { to { transform: rotate(360deg); } }
+    @keyframes mnshimmer { 0% { background-position: 100% 0; } 100% { background-position: -100% 0; } }
     input:focus, textarea:focus, select:focus { border-color: ${C.green} !important; box-shadow: 0 0 0 3px ${C.green}25 !important; }
     button:active:not(:disabled) { transform: translateY(1px); }
   `;
