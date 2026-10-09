@@ -2344,7 +2344,7 @@ function MapView({ posts, addPost, updatePost, stores, tags, settings, updateSet
         </div>
         {!mobile && (
           <div style={{ fontFamily: FONT_HAND, fontSize: '0.8125rem', color: C.inkSub, letterSpacing: 1 }}>
-            タブレットでも街中マップ見られますのでお声がけください～
+            QRコードからスマホでも街中マップが見られます～
           </div>
         )}
         <div style={{ fontFamily: FONT_HAND, color: C.green, letterSpacing: 2 }}>
