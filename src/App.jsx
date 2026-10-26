@@ -1,6 +1,7 @@
 ﻿import React, { useState, useEffect, useRef, useMemo, useCallback } from 'react';
 import qrcodeGenerator from 'qrcode-generator';
 import { supabase } from './supabase.js';
+import { loadDefaultJapaneseParser } from 'budoux';
 
 // =====================================
 // 街中スナック プラットフォーム Phase 1
@@ -1190,7 +1191,7 @@ function OptionalFields({ photo, setPhoto, ageGroup, setAgeGroup, gender, setGen
 // =====================================
 // 投稿フォーム（マップ内の➕から）
 // =====================================
-function PostForm({ onSubmit, onCancel, stores, tags: availableTags }) {
+function PostForm({ onSubmit, onCancel, hideBack = false, stores, tags: availableTags }) {
   const [penname, setPenname] = useState('');
   const [prefecture, setPrefecture] = useState('');
   const [storeId, setStoreId] = useState('');
@@ -1382,10 +1383,10 @@ function PostForm({ onSubmit, onCancel, stores, tags: availableTags }) {
   return (
     <div style={s.formScreen}>
       <div style={s.formBox}>
-        {onCancel && <button onClick={onCancel} style={s.backBtn}>← 戻る</button>}
+        {onCancel && !hideBack && <button onClick={onCancel} style={s.backBtn}>← 戻る</button>}
 
         <div style={{ textAlign: 'center', marginBottom: 28 }}>
-          <h1 style={s.formTitle}>みんなのおすすめマップ</h1>
+          <h1 className="mm-heading-mincho" style={s.formTitle}><Phrases text="みんなのおすすめマップ"/></h1>
           <p style={s.formSub}>地元、おすすめのお店、行ってよかった場所…</p>
           <AccentLine style={{ width: 80, margin: '16px auto 0' }} />
         </div>
@@ -1666,13 +1667,9 @@ function PostForm({ onSubmit, onCancel, stores, tags: availableTags }) {
           {/* （タグ選択は必須項目として上部に移動） */}
         </div>
 
-        <button onClick={handleSubmit} disabled={!canSubmit} style={{
-          ...s.submitBtn,
-          opacity: canSubmit ? 1 : 0.45,
-          cursor: canSubmit ? 'pointer' : 'not-allowed'
-        }}>
+        <button type="button" onClick={handleSubmit} disabled={!canSubmit} className="mm-btn primary mm-btn-lg" style={{ width: '100%' }}>
           <span>{submitting ? '貼っています…' : '日本地図に貼る'}</span>
-          {!submitting && <span style={{ fontSize: '1.125rem' }}>→</span>}
+          {!submitting && <Icon name="arrow"/>}
         </button>
       </div>
     </div>
@@ -2258,52 +2255,47 @@ function MapView({ posts, addPost, updatePost, stores, tags, settings, updateSet
         )}
 
         <aside style={{ ...s.focusPanel, minWidth: 0, ...(mobile ? { flex: 'none', overflow: 'visible' } : { flex: 1, minHeight: 0 }) }}>
-          {/* 一覧の操作バー：スマホと同じ「エリア▼ ジャンル▼ 並び替え」 */}
+          {/* 一覧の操作バー：スマホと同じ「エリア・ジャンル・並び替え」（ボタンの見た目もそろえる） */}
           <div style={s.pcBar}>
-            <div style={{ display: 'flex', alignItems: 'center', gap: 6, flexWrap: 'wrap' }}>
-              <button onClick={() => setSheet('area')}
-                style={{ ...s.facetBtn, ...(pcAreaPicked ? { background: pcAreaColor, borderColor: pcAreaColor, color: '#fff' } : {}) }}>
-                <span>📍</span><span style={s.facetLabel}>{pcAreaLabel}</span><span style={{ fontSize: '0.625rem' }}>▼</span>
+            <div style={{ display: 'flex', alignItems: 'center', gap: 8, flexWrap: 'wrap' }}>
+              <button type="button" className={`mm-select${pcAreaPicked ? ' is-on' : ''}`} onClick={() => setSheet('area')} aria-label="エリアで絞り込む">
+                <Icon name="pin" size={16}/><span className="mm-select-label">{pcAreaLabel}</span>
               </button>
-              <button onClick={() => setSheet('genre')}
-                style={{ ...s.facetBtn, ...(selTags.length ? { background: C.ink, borderColor: C.ink, color: '#fff' } : {}) }}>
-                <span>🏷</span><span style={s.facetLabel}>{pcGenreLabel}</span><span style={{ fontSize: '0.625rem' }}>▼</span>
+              <button type="button" className={`mm-select${selTags.length ? ' is-on' : ''}`} onClick={() => setSheet('genre')} aria-label="ジャンルで絞り込む">
+                <Icon name="tag" size={16}/><span className="mm-select-label">{pcGenreLabel}</span>
               </button>
-              <button onClick={() => setFeaturedOnly(v => !v)} aria-pressed={featuredOnly}
-                style={{ ...s.facetBtn, ...(featuredOnly ? { background: C.yellowLight, borderColor: C.yellow } : {}) }}>
-                ⭐ 面白い
+              <button type="button" className={`mm-btn${featuredOnly ? ' is-on' : ''}`} onClick={() => setFeaturedOnly(v => !v)} aria-pressed={featuredOnly}>
+                <Icon name="star" size={16}/><span>面白い</span>
               </button>
-              <select value={sort} onChange={(e) => setSort(e.target.value)} aria-label="並び替え" style={s.sortSelect}>
-                {SORTS.map(o => <option key={o.key} value={o.key}>{o.label}</option>)}
-              </select>
+              <label className="mm-select">
+                <Icon name="sort" size={16}/>
+                <select value={sort} onChange={(e) => setSort(e.target.value)} aria-label="並び替え">
+                  {SORTS.map(o => <option key={o.key} value={o.key}>{o.label}</option>)}
+                </select>
+              </label>
             </div>
             {pcFiltering && (
-              <div style={s.activeRow}>
+              <div className="mm-chips" style={{ marginTop: 8 }}>
                 {pcSubName && (
-                  <button onClick={() => { setPrefFilter(''); setSubFilter(''); }}
-                    style={{ ...s.activeChip, background: pcAreaColor + '18', color: pcAreaColor, borderColor: pcAreaColor }}>
-                    📍 {pcAreaLabel} ×
+                  <button type="button" className="mm-chip" onClick={() => { setPrefFilter(''); setSubFilter(''); }} aria-label="エリアの条件を外す">
+                    <Icon name="pin" size={14}/><span>{pcAreaLabel}</span><Icon name="x" size={14}/>
                   </button>
                 )}
-                {selTags.map(k => {
-                  const t = tagMap[k];
-                  return t && (
-                    <button key={k} onClick={() => setSelTags(selTags.filter(x => x !== k))}
-                      style={{ ...s.activeChip, background: t.color + '18', color: t.color, borderColor: t.color }}>
-                      🏷 {t.label} ×
-                    </button>
-                  );
-                })}
+                {selTags.map(k => tagMap[k] && (
+                  <button key={k} type="button" className="mm-chip" onClick={() => setSelTags(selTags.filter(x => x !== k))} aria-label={`${tagMap[k].label}の条件を外す`}>
+                    <Icon name="tag" size={14}/><span>{tagMap[k].label}</span><Icon name="x" size={14}/>
+                  </button>
+                ))}
                 {featuredOnly && (
-                  <button onClick={() => setFeaturedOnly(false)} style={{ ...s.activeChip, background: C.yellowLight, color: C.ink, borderColor: C.yellow }}>
-                    ⭐ 面白い ×
+                  <button type="button" className="mm-chip" onClick={() => setFeaturedOnly(false)} aria-label="面白いの条件を外す">
+                    <Icon name="star" size={14}/><span>面白い</span><Icon name="x" size={14}/>
                   </button>
                 )}
-                <button onClick={clearListFilters} style={s.clearAllBtn}>すべて解除</button>
+                <button type="button" className="mm-textlink" onClick={clearListFilters}>すべて解除</button>
               </div>
             )}
-            <div style={{ marginTop: 6, fontFamily: FONT_HAND, fontSize: '0.8125rem', color: C.inkSub }}>
-              <strong style={{ fontFamily: FONT_DISPLAY, fontSize: '0.9375rem', color: C.ink }}>{listPosts.length}</strong> 件の投稿
+            <div className="mm-count" style={{ marginTop: 8 }}>
+              <strong>{listPosts.length}</strong>件の投稿
             </div>
           </div>
 
@@ -3285,13 +3277,10 @@ function PostDetailModal({ post, updatePost, tagMap, onClose, requestPhotos }) {
   return (
     <div style={s.modalOverlay} onClick={onClose}>
       <div className="mn-modal" style={{ ...s.modal, maxWidth: 460, position: 'relative' }} onClick={(e) => e.stopPropagation()}>
-        <button onClick={onClose} aria-label="閉じる"
-          style={{ position: 'absolute', top: 10, right: 10, zIndex: 1,
-            width: 34, height: 34, borderRadius: '50%', cursor: 'pointer',
-            border: `1px solid ${C.line}`, background: C.bgWhite, color: C.inkSub,
-            fontSize: '1.125rem', lineHeight: 1, display: 'flex', alignItems: 'center', justifyContent: 'center' }}>×</button>
+        <button type="button" onClick={onClose} aria-label="閉じる" className="mm-iconbtn"
+          style={{ position: 'absolute', top: 10, right: 10, zIndex: 1, width: 40, height: 40 }}><Icon name="x"/></button>
 
-        <div style={{ display: 'flex', justifyContent: 'flex-end', marginBottom: 12, paddingRight: 34 }}>
+        <div style={{ display: 'flex', justifyContent: 'flex-end', marginBottom: 12, paddingRight: 44 }}>
           <span style={{ fontFamily: FONT_HAND, fontSize: '0.75rem', color: C.inkSub, fontStyle: 'italic' }}>— {post.penname}</span>
         </div>
 
@@ -3313,7 +3302,7 @@ function PostDetailModal({ post, updatePost, tagMap, onClose, requestPhotos }) {
 
         {(() => {
           if (requestPhotos && post.photo === undefined) {
-            return <div style={{ ...s.photoSkeleton, height: 220, marginBottom: 12 }}>📷 写真を読み込み中…</div>;
+            return <div style={{ ...s.photoSkeleton, height: 220, marginBottom: 12 }}><Icon name="image"/><span>写真を読み込み中…</span></div>;
           }
           const list = (post.photos && post.photos.length > 0) ? post.photos : (post.photo ? [post.photo] : []);
           if (list.length === 0) return null;
@@ -3427,7 +3416,7 @@ function LoadingNote({ error = false }) {
     <div style={{ textAlign: 'center', padding: 40, fontFamily: FONT_HAND, color: C.inkSub }}>
       {error ? (
         <>
-          <div style={{ fontSize: '1.5rem', marginBottom: 8 }}>⚠️</div>
+          <div style={{ display: 'flex', justifyContent: 'center', marginBottom: 8, color: C.pink }}><Icon name="alert" size={28}/></div>
           <div style={{ fontSize: '0.9375rem', fontWeight: 700, color: C.ink }}>投稿を読み込めませんでした</div>
           <div style={{ fontSize: '0.8125rem', marginTop: 4 }}>通信環境を確認して、画面を更新してください</div>
         </>
@@ -3663,7 +3652,7 @@ function ScrollingList({ posts, regionColor, onPostClick, tagMap, noAutoScroll =
                 {(() => {
                   // まだ取得していない写真は、読み込み中と分かる枠を出す
                   if (onNeedPhotos && post.photo === undefined) {
-                    return <div style={{ ...s.photoSkeleton, marginBottom: 10 }}>📷 写真を読み込み中…</div>;
+                    return <div style={{ ...s.photoSkeleton, marginBottom: 10 }}><Icon name="image"/><span>写真を読み込み中…</span></div>;
                   }
                   const list = (post.photos && post.photos.length > 0) ? post.photos : (post.photo ? [post.photo] : []);
                   if (list.length === 0) return null;
@@ -3847,6 +3836,50 @@ function CustomerTabs({ tab, setTab, sticky = false, isMobile = false }) {
   );
 }
 
+// =====================================
+// 共通：線画アイコン（線の太さ2・角は丸く）
+// =====================================
+const ICON_PATHS = {
+  search: 'M11 4a7 7 0 1 0 0 14 7 7 0 0 0 0-14zM20 20l-4-4',
+  pin: 'M12 21s-7-6.2-7-11.5a7 7 0 0 1 14 0C19 14.8 12 21 12 21zM12 12a2.5 2.5 0 1 0 0-5 2.5 2.5 0 0 0 0 5z',
+  tag: 'M3 12V4h8l9 9-8 8-9-9zM7.5 7.5h.01',
+  sort: 'M7 4v16M4 17l3 3 3-3M17 20V4M14 7l3-3 3 3',
+  pen: 'M4 20h4L19 9l-4-4L4 16v4zM14 6l4 4',
+  plus: 'M12 5v14M5 12h14',
+  x: 'M6 6l12 12M18 6L6 18',
+  back: 'M15 18l-6-6 6-6',
+  check: 'M5 12.5l4.5 4.5L19 7',
+  star: 'M12 3.5l2.6 5.3 5.9.9-4.3 4.1 1 5.8L12 16.9l-5.2 2.7 1-5.8-4.3-4.1 5.9-.9z',
+  image: 'M4 5h16v14H4zM4 16l4.5-4.5 4 4L15 13l5 5M15.5 9h.01',
+  alert: 'M12 4l9 16H3zM12 10v4M12 17h.01',
+  map: 'M9 4L3 6.5v13L9 17l6 2.5 6-2.5v-13L15 7zM9 4v13M15 7v12.5',
+  board: 'M5 4h14v16H5zM9 9h6M9 13h6M9 17h3',
+  qr: 'M4 4h6v6H4zM14 4h6v6h-6zM4 14h6v6H4zM14 14h2v2h-2zM18 18h2v2h-2zM14 18h2M18 14h2',
+  arrow: 'M5 12h14M13 6l6 6-6 6',
+};
+function Icon({ name, size = 18 }) {
+  return (
+    <svg className="mm-icon" width={size} height={size} viewBox="0 0 24 24" fill="none" stroke="currentColor"
+      strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
+      <path d={ICON_PATHS[name]}/>
+    </svg>
+  );
+}
+
+// 日本語を文節で区切って、文節の途中で改行しないようにする（BudouX）
+const jaParser = loadDefaultJapaneseParser();
+function Phrases({ text }) {
+  return jaParser.parse(text).map((w, i) => <span key={i} className="mm-phrase">{w}</span>);
+}
+
+// スマホ・タブレットは「投稿一覧＋検索」の画面にする（地図はマウスで使うPCだけ）
+function useBrowseLayout() {
+  const narrow = useIsMobile(1024);
+  const [touch] = useState(() =>
+    typeof window !== 'undefined' && window.matchMedia('(hover: none) and (pointer: coarse)').matches);
+  return narrow || touch;
+}
+
 // スマホ・PCの一覧で使うエリアの色と並び順（北→南。ホームの荒川区を先頭）
 const AREA_ORDER = ['荒川区', '北海道', '東北', '関東', '中部', '近畿', '中国', '四国', '九州', '沖縄', '海外'];
 const AREA_COLORS = {
@@ -3912,7 +3945,7 @@ function BottomSheet({ title, onClose, footer, children }) {
           <div style={s.sheetGrabber}/>
           <div style={s.sheetHead}>
             <div style={{ fontFamily: FONT_DISPLAY, fontSize: '1rem', fontWeight: 700, letterSpacing: 1 }}>{title}</div>
-            <button onClick={onClose} aria-label="閉じる" style={s.sheetClose}>×</button>
+            <button type="button" onClick={onClose} aria-label="閉じる" className="mm-iconbtn"><Icon name="x"/></button>
           </div>
         </div>
         <div style={s.sheetBody}>{children}</div>
@@ -3933,8 +3966,8 @@ function AreaSheet({ rows, allCount, initArea = '', initSub = '', countFor, onAp
   return (
     <BottomSheet title="エリアを選ぶ" onClose={onClose}
       footer={<>
-        <button onClick={() => { setA(''); setSb(''); }} style={s.sheetGhost}>クリア</button>
-        <button onClick={() => onApply(a, sb)} disabled={n === 0} style={{ ...s.sheetPrimary, opacity: n === 0 ? 0.4 : 1 }}>{n}件を表示</button>
+        <button type="button" className="mm-btn" onClick={() => { setA(''); setSb(''); }}>クリア</button>
+        <button type="button" className="mm-btn primary" onClick={() => onApply(a, sb)} disabled={n === 0} style={{ flex: 1 }}>{n}件を表示</button>
       </>}>
       <button onClick={() => { setA(''); setSb(''); }} style={s.radioRow}>
         <span style={{ ...s.radio, ...(a === '' ? s.radioOn : {}) }}/>
@@ -3993,8 +4026,8 @@ function GenreSheet({ tags, base, init = [], onApply, onClose }) {
   return (
     <BottomSheet title="ジャンルを選ぶ" onClose={onClose}
       footer={<>
-        <button onClick={() => setSel([])} style={s.sheetGhost}>クリア</button>
-        <button onClick={() => onApply(sel)} disabled={n === 0} style={{ ...s.sheetPrimary, opacity: n === 0 ? 0.4 : 1 }}>{n}件を表示</button>
+        <button type="button" className="mm-btn" onClick={() => setSel([])}>クリア</button>
+        <button type="button" className="mm-btn primary" onClick={() => onApply(sel)} disabled={n === 0} style={{ flex: 1 }}>{n}件を表示</button>
       </>}>
       <div style={{ fontFamily: FONT_HAND, fontSize: '0.75rem', color: C.inkSub, marginBottom: 10 }}>
         複数選べます（どれかに当てはまる投稿を表示）
@@ -4007,7 +4040,8 @@ function GenreSheet({ tags, base, init = [], onApply, onClose }) {
               onClick={() => setSel(on ? sel.filter(x => x !== t.key) : [...sel, t.key])}
               style={{ ...s.genreChip, borderColor: on ? t.color : C.line, background: on ? t.color + '1f' : C.bgWhite,
                 color: on ? t.color : C.ink, fontWeight: on ? 700 : 500, opacity: dim ? 0.35 : 1 }}>
-              {on ? '✓ ' : ''}{t.emoji}{t.label}<span style={{ opacity: 0.6, fontSize: '0.75rem', marginLeft: 2 }}>{m}</span>
+              {on ? <Icon name="check" size={16}/> : <span style={{ width: 8, height: 8, borderRadius: '50%', background: t.color, flexShrink: 0 }}/>}
+              <span>{t.label}<span style={{ opacity: 0.6, fontSize: '0.75rem', marginLeft: 4 }}>{m}</span></span>
             </button>
           );
         })}
@@ -4033,7 +4067,7 @@ function sortPosts(list, sort) {
 // 調査レポート「スマホ 絞り込み UI 設計」の推奨案：
 //   初期表示は「エリア▼」「ジャンル▼」「並び替え」と件数だけ。県とタグはシートの中へ。
 // =====================================
-function CustomerBrowse({ posts, updatePost, tags, postsLoading = false, postsLoadError = false, requestPhotos }) {
+function CustomerBrowse({ posts, updatePost, tags, postsLoading = false, postsLoadError = false, requestPhotos, onPost, notice }) {
   const tagMap = useMemo(() => Object.fromEntries((tags || []).map(t => [t.key, t])), [tags]);
   const [q, setQ] = useState('');
   const [area, setArea] = useState('');
@@ -4097,76 +4131,86 @@ function CustomerBrowse({ posts, updatePost, tags, postsLoading = false, postsLo
   const genreLabel = selTags.length === 0 ? 'ジャンル'
     : selTags.length === 1 ? (tagMap[selTags[0]]?.label || 'ジャンル') : `ジャンル ${selTags.length}`;
   const filtering = q.trim() !== '' || area !== '' || selTags.length > 0;
-  const ac = area ? areaColor(area) : C.ink;
 
   return (
     <>
-      {/* ロゴ */}
-      <header style={s.browseHeader}>
-        <div style={{ ...s.monitorKanji, fontSize: 18, padding: '5px 10px', letterSpacing: 2 }}>街中</div>
-        <div style={{ ...s.monitorTitle, fontSize: 15, letterSpacing: 2 }}>MAP</div>
-        <div style={{ marginLeft: 'auto', fontFamily: FONT_HAND, fontSize: '0.75rem', color: C.inkSub, letterSpacing: 1 }}>みんなのおすすめ</div>
+      {/* ヘッダー（スクロールしても上に固定）。塗りつぶしの緑は「投稿する」だけ */}
+      <header className="mm-topbar">
+        <span className="mm-logo" aria-label="街中マップ"><span className="mm-logo-box">街中</span><span className="mm-logo-sub">マップ</span></span>
+        <span className="mm-spacer"/>
+        <button type="button" className="mm-btn primary" onClick={onPost}>
+          <Icon name="pen"/><span>投稿<span className="mm-wide">する</span></span>
+        </button>
       </header>
 
-      {/* 検索 */}
-      <div style={{ padding: '12px 12px 0' }}>
-        <div style={{ position: 'relative' }}>
-          <span style={{ position: 'absolute', left: 13, top: '50%', transform: 'translateY(-50%)', fontSize: '0.9375rem', pointerEvents: 'none' }}>🔍</span>
-          <input value={q} onChange={(e) => setQ(e.target.value)} placeholder="お店・地名・キーワードで検索"
-            style={{ width: '100%', padding: '11px 38px', borderRadius: 999, border: `1.5px solid ${C.line}`,
-              fontFamily: FONT_BODY, fontSize: '1rem', outline: 'none', boxSizing: 'border-box', background: C.bgOff }}/>
-          {q && <button onClick={() => setQ('')} aria-label="検索をクリア" style={s.browseClearX}>×</button>}
-        </div>
+      {notice}
+
+      {/* キャッチコピー */}
+      <section className="mm-intro" aria-labelledby="mm-intro-title">
+        <p className="mm-intro-eyebrow">MACHINAKA MAP</p>
+        <h1 id="mm-intro-title" className="mm-intro-title"><Phrases text="いつもの街に、まだ知らない出会いを。"/></h1>
+        <p className="mm-intro-lead">
+          <Phrases text="お気に入りのお店や、地元の人だからこそ知っている街の魅力を見つけられる"/>
+          <strong className="mm-phrase">『街中マップ』。</strong>
+        </p>
+        <p className="mm-intro-body">
+          <Phrases text="気になる場所を訪れたり、街のおすすめを共有したり。いつもの景色がちょっと違って見える、新しい街歩きのきっかけに。"/>
+        </p>
+        <p className="mm-intro-body">
+          <Phrases text="あなたの「好き」が、"/><mark><Phrases text="誰かの新しいお気に入り"/></mark><Phrases text="になるかもしれません。"/>
+        </p>
+      </section>
+
+      {/* 検索と絞り込み：iPad・PCは1行、スマホは検索が1行目・エリアとジャンルが2行目 */}
+      <div className="mm-toolbar">
+        <label className="mm-search">
+          <Icon name="search"/>
+          <input type="search" enterKeyHint="search" value={q} onChange={(e) => setQ(e.target.value)}
+            placeholder="お店・地名・キーワードでさがす" aria-label="さがす"/>
+          {q && <button type="button" className="mm-search-clear" onClick={() => setQ('')} aria-label="検索をクリア"><Icon name="x" size={16}/></button>}
+        </label>
+        <button type="button" className={`mm-select${area ? ' is-on' : ''}`} onClick={openArea} aria-label="エリアで絞り込む">
+          <Icon name="pin" size={16}/><span className="mm-select-label">{areaLabel}</span>
+        </button>
+        <button type="button" className={`mm-select${selTags.length ? ' is-on' : ''}`} onClick={openGenre} aria-label="ジャンルで絞り込む">
+          <Icon name="tag" size={16}/><span className="mm-select-label">{genreLabel}</span>
+        </button>
       </div>
 
-      {/* 操作バー（スクロールしても上に固定） */}
-      <div style={s.browseBar}>
-        <div style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
-          <button onClick={openArea}
-            style={{ ...s.facetBtn, ...(area ? { background: ac, borderColor: ac, color: '#fff' } : {}) }}>
-            <span>📍</span><span style={s.facetLabel}>{areaLabel}</span><span style={{ fontSize: '0.625rem' }}>▼</span>
-          </button>
-          <button onClick={openGenre}
-            style={{ ...s.facetBtn, ...(selTags.length ? { background: C.ink, borderColor: C.ink, color: '#fff' } : {}) }}>
-            <span>🏷</span><span style={s.facetLabel}>{genreLabel}</span><span style={{ fontSize: '0.625rem' }}>▼</span>
-          </button>
-          <select value={sort} onChange={(e) => setSort(e.target.value)} aria-label="並び替え" style={s.sortSelect}>
+      {/* 件数・並び替え・絞り込み中の条件（ヘッダーの下に固定） */}
+      <div className="mm-resultbar">
+        <div className="mm-count" aria-live="polite">
+          {postsLoading && posts.length === 0 ? '読み込み中…' : <><strong>{results.length}</strong>件の投稿</>}
+        </div>
+        <label className="mm-select">
+          <Icon name="sort" size={16}/>
+          <select value={sort} onChange={(e) => setSort(e.target.value)} aria-label="並び替え">
             {SORTS.map(o => <option key={o.key} value={o.key}>{o.label}</option>)}
           </select>
-        </div>
-
-        {/* 絞り込み中の条件（このときだけ出る） */}
+        </label>
         {filtering && (
-          <div style={s.activeRow}>
+          <div className="mm-chips">
             {area && (
-              <button onClick={() => { setArea(''); setSub(''); }} style={{ ...s.activeChip, background: ac + '18', color: ac, borderColor: ac }}>
-                📍 {area}{sub ? ` › ${sub}` : ''} ×
+              <button type="button" className="mm-chip" onClick={() => { setArea(''); setSub(''); }} aria-label="エリアの条件を外す">
+                <Icon name="pin" size={14}/><span>{area}{sub ? ` › ${sub}` : ''}</span><Icon name="x" size={14}/>
               </button>
             )}
-            {selTags.map(k => {
-              const t = tagMap[k];
-              return t && (
-                <button key={k} onClick={() => setSelTags(selTags.filter(x => x !== k))}
-                  style={{ ...s.activeChip, background: t.color + '18', color: t.color, borderColor: t.color }}>
-                  🏷 {t.label} ×
-                </button>
-              );
-            })}
+            {selTags.map(k => tagMap[k] && (
+              <button key={k} type="button" className="mm-chip" onClick={() => setSelTags(selTags.filter(x => x !== k))} aria-label={`${tagMap[k].label}の条件を外す`}>
+                <Icon name="tag" size={14}/><span>{tagMap[k].label}</span><Icon name="x" size={14}/>
+              </button>
+            ))}
             {q.trim() && (
-              <button onClick={() => setQ('')} style={{ ...s.activeChip, background: C.bgOff, color: C.ink, borderColor: C.line }}>
-                🔍 {q.trim()} ×
+              <button type="button" className="mm-chip" onClick={() => setQ('')} aria-label="キーワードの条件を外す">
+                <Icon name="search" size={14}/><span>{q.trim()}</span><Icon name="x" size={14}/>
               </button>
             )}
-            <button onClick={clearAll} style={s.clearAllBtn}>すべて解除</button>
+            <button type="button" className="mm-textlink" onClick={clearAll}>すべて解除</button>
           </div>
         )}
-
-        <div style={{ marginTop: 6, fontFamily: FONT_HAND, fontSize: '0.8125rem', color: C.inkSub }}>
-          {postsLoading && posts.length === 0 ? '読み込み中…'
-            : <><strong style={{ fontFamily: FONT_DISPLAY, fontSize: '0.9375rem', color: C.ink }}>{results.length}</strong> 件の投稿</>}
-        </div>
       </div>
 
+      <div className="mm-list">
       <ScrollingList
         posts={results}
         regionColor={(p) => areaColor(p.region)}
@@ -4181,14 +4225,12 @@ function CustomerBrowse({ posts, updatePost, tags, postsLoading = false, postsLo
 
       {filtering && results.length === 0 && !postsLoading && (
         <div style={{ textAlign: 'center', marginTop: -20, paddingBottom: 24 }}>
-          <button onClick={clearAll} style={{ ...s.sheetPrimary, display: 'inline-block', width: 'auto', padding: '10px 22px' }}>
-            条件を解除してすべて表示
-          </button>
+          <button type="button" className="mm-btn" onClick={clearAll}>条件を解除してすべて表示</button>
         </div>
       )}
+      </div>
 
-      {/* 投稿ボタンに一覧の最後が隠れないよう余白 */}
-      <div style={{ height: 90 }}/>
+      <div style={{ height: 32 }}/>
 
       {sheet === 'area' && (
         <AreaSheet rows={areaRows} allCount={areaBase.length} initArea={area} initSub={sub}
@@ -4216,77 +4258,72 @@ function CustomerBrowse({ posts, updatePost, tags, postsLoading = false, postsLo
 function CustomerPostPage({ posts, addPost, updatePost, stores, tags, settings, postsLoading = false, postsLoadError = false, requestPhotos }) {
   const [postDone, setPostDone] = useState(false);
   const [formKey, setFormKey] = useState(0); // フォームリセット用
-  const [tab, setTab] = useState('map');     // 一覧（投稿を見る）がメイン。投稿は右下のボタンから
-  const isMobile = useIsMobile();
+  const [tab, setTab] = useState('map');     // 一覧（投稿を見る）がメイン。投稿は「投稿する」ボタンから
+  const browse = useBrowseLayout();          // スマホ・タブレットは一覧＋検索、PCは地図
 
   const handleSubmit = (post) => {
     addPost(post);
     setPostDone(true);
     setFormKey(k => k + 1); // フォームをリセット
   };
+  const goPost = () => { setPostDone(false); setTab('form'); window.scrollTo(0, 0); };
 
-  // マップ：閲覧専用（ピン調整と設定の書き換えはさせない）
+  // 投稿完了のお知らせ（フォームから戻ってきたときに出る）
+  const doneNotice = postDone && (
+    <div className="mm-notice" role="status">
+      <Icon name="check" size={20}/>
+      <div className="mm-notice-text"><strong>投稿ありがとうございました！</strong><span>みんなの投稿に反映されました。</span></div>
+      <button type="button" className="mm-search-clear" onClick={() => setPostDone(false)} aria-label="閉じる"><Icon name="x" size={18}/></button>
+    </div>
+  );
+
   if (tab === 'map') {
-    return (
-      <div className={isMobile ? undefined : 'mn-screen'} style={{
-        // スマホはページごとスクロール、PC/タブレットは mn-screen で画面固定
-        ...(isMobile ? { minHeight: '100dvh' } : {}),
-        display: 'flex', flexDirection: 'column', background: C.bgWhite, fontFamily: FONT_BODY,
-      }}>
-        {/* 投稿完了バナー（フォームから戻ってきたときに出る） */}
-        {postDone && (
-          <div style={{ margin: '12px 12px 0', padding: '12px 16px', background: C.greenLight, borderRadius: 10, display: 'flex', alignItems: 'center', gap: 10, border: `1px solid ${C.green}`, flexShrink: 0 }}>
-            <span style={{ fontSize: '1.25rem' }}>🎉</span>
-            <div>
-              <div style={{ fontFamily: FONT_HAND, fontSize: '0.9375rem', color: C.green, fontWeight: 700 }}>投稿ありがとうございました！</div>
-              <div style={{ fontFamily: FONT_HAND, fontSize: '0.75rem', color: C.inkSub, marginTop: 2 }}>みんなの投稿に反映されました。</div>
-            </div>
-            <button onClick={() => setPostDone(false)} style={{ marginLeft: 'auto', background: 'none', border: 'none', cursor: 'pointer', color: C.inkSub, fontSize: '1.125rem' }}>×</button>
-          </div>
-        )}
-        {isMobile ? (
-          /* スマホは地図を出さず、投稿の閲覧と検索に絞る */
+    if (browse) {
+      return (
+        <div className="mm-page">
           <CustomerBrowse
             posts={posts} updatePost={updatePost} tags={tags}
             postsLoading={postsLoading} postsLoadError={postsLoadError} requestPhotos={requestPhotos}
+            onPost={goPost} notice={doneNotice}
           />
-        ) : (
-          <div style={{ flex: 1, minHeight: 0 }}>
-            <MapView
-              posts={posts} addPost={addPost} updatePost={updatePost}
-              stores={stores} tags={tags}
-              settings={settings} updateSettings={() => {}}
-              mobile={false} allowPinEdit={false} embedded
-              postsLoading={postsLoading} postsLoadError={postsLoadError} requestPhotos={requestPhotos}
-            />
-          </div>
-        )}
-
-        {/* 右下の投稿ボタン */}
-        <button onClick={() => { setPostDone(false); setTab('form'); }} style={s.fabPost}>
-          <span style={{ fontSize: '1.375rem', lineHeight: 1 }}>＋</span>
-          <span>投稿する</span>
+        </div>
+      );
+    }
+    // PC：地図（閲覧専用。ピン調整と設定の書き換えはさせない）
+    return (
+      <div className="mn-screen" style={{ display: 'flex', flexDirection: 'column', background: C.bgWhite, fontFamily: FONT_BODY }}>
+        {doneNotice}
+        <div style={{ flex: 1, minHeight: 0 }}>
+          <MapView
+            posts={posts} addPost={addPost} updatePost={updatePost}
+            stores={stores} tags={tags}
+            settings={settings} updateSettings={() => {}}
+            mobile={false} allowPinEdit={false} embedded
+            postsLoading={postsLoading} postsLoadError={postsLoadError} requestPhotos={requestPhotos}
+          />
+        </div>
+        <button type="button" onClick={goPost} className="mm-btn primary mm-btn-lg mm-fab">
+          <Icon name="pen"/><span>投稿する</span>
         </button>
       </div>
     );
   }
 
   return (
-    <div style={{ minHeight: '100vh', background: C.bgWhite, fontFamily: FONT_BODY }}>
-      {/* ヘッダー */}
-      <header style={{ padding: '12px 16px', display: 'flex', alignItems: 'center', gap: 8, borderBottom: `2px solid ${C.green}`, background: C.bgWhite, position: 'sticky', top: 0, zIndex: 20 }}>
-        <div style={{ fontFamily: FONT_DISPLAY, fontSize: '1.0625rem', fontWeight: 700, letterSpacing: 3, color: C.ink }}>街中スナック</div>
-        <div style={{ fontFamily: FONT_HAND, fontSize: '0.6875rem', color: C.inkSub, letterSpacing: 1 }}>みんなのおすすめマップ</div>
-        <div style={{ marginLeft: 'auto', background: C.greenLight, color: C.green, fontFamily: FONT_HAND, fontSize: '0.6875rem', fontWeight: 700, padding: '4px 10px', borderRadius: 999 }}>
-          📌 投稿フォーム
-        </div>
+    <div className="mm-page">
+      <header className="mm-topbar">
+        <span className="mm-logo" aria-label="街中マップ"><span className="mm-logo-box">街中</span><span className="mm-logo-sub">マップ</span></span>
+        <span className="mm-spacer"/>
+        <button type="button" className="mm-btn" onClick={() => setTab('map')}>
+          <Icon name="back"/><span>一覧<span className="mm-wide">に戻る</span></span>
+        </button>
       </header>
-
-      {/* onCancel を渡すと「← 戻る」が出て、投稿完了の約1.8秒後に自動で一覧へ戻る */}
+      {/* onCancel は投稿完了の約1.8秒後に一覧へ戻すのにも使われる。戻るボタンはヘッダーにあるのでフォーム内のものは隠す */}
       <PostForm
         key={formKey}
         onSubmit={handleSubmit}
         onCancel={() => setTab('map')}
+        hideBack
         stores={stores}
         tags={tags}
       />
@@ -6560,10 +6597,10 @@ export default function App() {
 
   // タブ構成
   const tabs = [];
-  if (settings.showMap) tabs.push({ key: 'map', icon: '🗾', label: 'マップ' });
-  if (settings.showBoard) tabs.push({ key: 'board', icon: '📋', label: '掲示板' });
-  if (settings.showQR) tabs.push({ key: 'qr', icon: '📱', label: 'QR' });
-  if (isAdmin) tabs.push({ key: 'admin', icon: '⚙️', label: adminLoggedIn ? '管理' : '🔐 管理' });
+  if (settings.showMap) tabs.push({ key: 'map', icon: 'map', label: 'マップ' });
+  if (settings.showBoard) tabs.push({ key: 'board', icon: 'board', label: '掲示板' });
+  if (settings.showQR) tabs.push({ key: 'qr', icon: 'qr', label: 'QR' });
+  if (isAdmin) tabs.push({ key: 'admin', icon: null, label: '管理' });
 
   useEffect(() => {
     if (!tabs.some(t => t.key === view)) {
@@ -6594,9 +6631,13 @@ export default function App() {
       <div style={{ minHeight: '100vh', fontFamily: FONT_BODY, background: C.bgWhite, color: C.ink }}>
         <div style={switcherStyle}>
           <span onMouseDown={handleTabDragStart} style={{ cursor: 'grab', padding: '0 4px', color: C.inkSub, fontSize: '0.75rem', userSelect: 'none' }}>⠿</span>
-          {tabs.map(t => (
-            <button key={t.key} onClick={() => setView(t.key)} style={{ ...s.switcherBtn, ...(view === t.key ? s.switcherBtnActive : {}) }}>
-              <span>{t.icon}</span>
+          {tabs.map(t => t.key === 'admin' ? (
+            // 管理画面への入口はボタンにせず、小さな文字リンクにする
+            <button key={t.key} type="button" onClick={() => setView(t.key)} className="mm-textlink"
+              style={view === t.key ? { color: C.ink, textDecoration: 'underline' } : undefined}>{t.label}</button>
+          ) : (
+            <button key={t.key} type="button" onClick={() => setView(t.key)} style={{ ...s.switcherBtn, ...(view === t.key ? s.switcherBtnActive : {}) }}>
+              <Icon name={t.icon} size={16}/>
               <span style={{ fontSize: '0.6875rem', fontWeight: 600 }}>{t.label}</span>
             </button>
           ))}
@@ -6611,9 +6652,13 @@ export default function App() {
     <div style={{ minHeight: '100vh', fontFamily: FONT_BODY, background: C.bgWhite, color: C.ink }}>
       <div style={switcherStyle}>
         <span onMouseDown={handleTabDragStart} style={{ cursor: 'grab', padding: '0 4px', color: C.inkSub, fontSize: '0.75rem', userSelect: 'none' }}>⠿</span>
-        {tabs.map(t => (
-          <button key={t.key} onClick={() => setView(t.key)} style={{ ...s.switcherBtn, ...(view === t.key ? s.switcherBtnActive : {}) }}>
-            <span>{t.icon}</span>
+        {tabs.map(t => t.key === 'admin' ? (
+          // 管理画面への入口はボタンにせず、小さな文字リンクにする
+          <button key={t.key} type="button" onClick={() => setView(t.key)} className="mm-textlink"
+            style={view === t.key ? { color: C.ink, textDecoration: 'underline' } : undefined}>{t.label}</button>
+        ) : (
+          <button key={t.key} type="button" onClick={() => setView(t.key)} style={{ ...s.switcherBtn, ...(view === t.key ? s.switcherBtnActive : {}) }}>
+            <Icon name={t.icon} size={16}/>
             <span style={{ fontSize: '0.6875rem', fontWeight: 600 }}>{t.label}</span>
           </button>
         ))}
@@ -6895,7 +6940,7 @@ const s = {
 
   // フィルタバー
   filterBar: { borderBottom: `1px solid ${C.line}`, background: C.bgOff, flexShrink: 0 },
-  photoSkeleton: { height: 170, borderRadius: 8, display: 'flex', alignItems: 'center', justifyContent: 'center',
+  photoSkeleton: { height: 170, borderRadius: 8, display: 'flex', alignItems: 'center', justifyContent: 'center', gap: 6,
     fontFamily: FONT_HAND, fontSize: '0.8125rem', color: C.inkSub,
     background: `linear-gradient(90deg, ${C.bgGray} 25%, ${C.bgOff} 50%, ${C.bgGray} 75%)`, backgroundSize: '200% 100%',
     animation: 'mnshimmer 1.4s ease-in-out infinite' },
@@ -6925,7 +6970,7 @@ const s = {
   radio: { width: 18, height: 18, borderRadius: '50%', border: `2px solid ${C.line}`, flexShrink: 0, boxSizing: 'border-box' },
   radioOn: { borderColor: C.ink, background: C.ink, boxShadow: 'inset 0 0 0 4px #fff' },
   rowCount: { fontFamily: FONT_LATIN, fontSize: '0.8125rem', color: C.inkSub, minWidth: 24, textAlign: 'right' },
-  genreChip: { display: 'inline-flex', alignItems: 'center', gap: 3, padding: '9px 14px', minHeight: 44, borderRadius: 999,
+  genreChip: { display: 'inline-flex', alignItems: 'center', gap: 6, padding: '9px 14px', minHeight: 44, borderRadius: 999,
     border: '1.5px solid', cursor: 'pointer', fontFamily: FONT_HAND, fontSize: '0.875rem' },
   browseHeader: { display: 'flex', alignItems: 'center', gap: 8, padding: '12px 14px 10px',
     borderBottom: `2px solid ${C.green}`, background: C.bgWhite },
@@ -7244,6 +7289,104 @@ if (typeof document !== 'undefined' && !document.getElementById('mn-global-style
     @keyframes mnshimmer { 0% { background-position: 100% 0; } 100% { background-position: -100% 0; } }
     input:focus, textarea:focus, select:focus { border-color: ${C.green} !important; box-shadow: 0 0 0 3px ${C.green}25 !important; }
     button:active:not(:disabled) { transform: translateY(1px); }
+    /* ===== 街中マップ：シェアボトル掲示板とそろえたデザイン（mm-） ===== */
+    :root { --mm-green:#19A86B; --mm-green-dark:#128455; --mm-green-soft:#E6F6EF; --mm-pink:#E6007E; --mm-yellow:#F39C12;
+      --mm-ink:#1A1A1A; --mm-ink2:#5C5C58; --mm-ink3:#8A8A84; --mm-bg:#FFFFFF; --mm-bg2:#FAFAF7; --mm-line:#E5E5E0; }
+    /* overflow-x:hidden だと中の position:sticky（ヘッダー固定）が効かなくなるので clip を使う */
+    .mm-page { min-height:100dvh; overflow-x:clip; background:var(--mm-bg2); color:var(--mm-ink);
+      font-family:"M PLUS Rounded 1c","Hiragino Maru Gothic ProN",system-ui,sans-serif; -webkit-text-size-adjust:100%; }
+    .mm-icon { flex-shrink:0; display:block; }
+    .mm-phrase { display:inline-block; }
+    .mm-topbar { position:sticky; top:0; z-index:40; display:flex; align-items:center; gap:10px; box-sizing:border-box;
+      min-height:calc(64px + env(safe-area-inset-top,0px)); padding:calc(10px + env(safe-area-inset-top,0px)) 20px 10px;
+      background:var(--mm-bg); border-bottom:1px solid var(--mm-line); }
+    .mm-spacer { flex:1 1 0%; }
+    .mm-logo { display:inline-flex; align-items:center; gap:8px; font-weight:800; white-space:nowrap; flex-shrink:0; }
+    .mm-logo-box { background:var(--mm-ink); color:#fff; border-radius:9px; padding:3px 9px 4px; font-size:18px; letter-spacing:.04em; }
+    .mm-logo-sub { font-size:15px; letter-spacing:.06em; color:var(--mm-ink); }
+    .mm-btn { display:inline-flex; align-items:center; justify-content:center; gap:6px; box-sizing:border-box; flex-shrink:0;
+      height:44px; padding:0 18px; border-radius:999px; border:1.5px solid var(--mm-line); background:var(--mm-bg); color:var(--mm-ink);
+      font-family:inherit; font-size:15px; font-weight:700; white-space:nowrap; cursor:pointer; -webkit-tap-highlight-color:transparent;
+      transition:background .15s,border-color .15s; }
+    .mm-btn:hover { border-color:var(--mm-ink3); }
+    .mm-btn:active:not(:disabled) { transform:scale(.98); }
+    .mm-btn:disabled { opacity:.45; pointer-events:none; }
+    .mm-btn:focus-visible, .mm-select:focus-visible, .mm-chip:focus-visible { outline:none; border-color:var(--mm-green); }
+    .mm-btn.primary { background:var(--mm-green); border-color:var(--mm-green); color:#fff; box-shadow:0 2px 8px rgba(25,168,107,.25); }
+    .mm-btn.primary:hover { background:var(--mm-green-dark); border-color:var(--mm-green-dark); }
+    .mm-btn.is-on { background:var(--mm-green-soft); border-color:var(--mm-green); color:var(--mm-green-dark); }
+    .mm-btn-lg { height:52px; padding:0 28px; font-size:16px; }
+    .mm-iconbtn { display:grid; place-items:center; flex-shrink:0; width:44px; height:44px; padding:0; box-sizing:border-box;
+      border-radius:999px; border:1.5px solid var(--mm-line); background:var(--mm-bg); color:var(--mm-ink2); cursor:pointer; }
+    .mm-textlink { border:none; background:none; padding:8px 6px; font-family:inherit; font-size:13px; font-weight:700;
+      color:var(--mm-ink3); white-space:nowrap; cursor:pointer; text-decoration:none; }
+    .mm-textlink:hover { color:var(--mm-ink); text-decoration:underline; }
+    .mm-toolbar { display:flex; align-items:center; gap:10px; padding:12px 20px; background:var(--mm-bg); border-bottom:1px solid var(--mm-line); }
+    .mm-search, .mm-select { display:flex; align-items:center; gap:8px; box-sizing:border-box; height:44px; padding:0 16px;
+      border:1.5px solid var(--mm-line); border-radius:999px; background:var(--mm-bg); color:var(--mm-ink3);
+      font-family:inherit; transition:border-color .15s,color .15s; }
+    .mm-search:focus-within, .mm-select:focus-within { border-color:var(--mm-green); color:var(--mm-green); }
+    .mm-search { flex:1 1 auto; min-width:0; }
+    .mm-search input { flex:1 1 0%; min-width:0; height:100%; border:none; outline:none; background:none; padding:0;
+      font-family:inherit; font-size:15px; color:var(--mm-ink); }
+    .mm-search input::placeholder { color:var(--mm-ink3); }
+    .mm-search input::-webkit-search-cancel-button { display:none; }
+    .mm-search-clear { display:grid; place-items:center; margin-right:-8px; padding:6px; border:none; background:none; color:var(--mm-ink3); cursor:pointer; }
+    .mm-select { position:relative; flex:0 0 auto; padding-right:36px; cursor:pointer; font-size:14px; font-weight:700; }
+    .mm-select::after { content:""; position:absolute; top:50%; right:15px; width:7px; height:7px; margin-top:-5px; pointer-events:none;
+      border-right:2px solid var(--mm-ink3); border-bottom:2px solid var(--mm-ink3); transform:rotate(45deg); }
+    .mm-select-label { min-width:0; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; color:var(--mm-ink); }
+    .mm-select select { appearance:none; -webkit-appearance:none; min-width:0; height:100%; border:none; outline:none; background:none;
+      padding:0; font-family:inherit; font-size:14px; font-weight:700; color:var(--mm-ink); cursor:pointer; text-overflow:ellipsis; }
+    .mm-select.is-on { border-color:var(--mm-green); background:var(--mm-green-soft); color:var(--mm-green-dark); }
+    .mm-select.is-on .mm-select-label { color:var(--mm-green-dark); }
+    .mm-select.is-on::after { border-color:var(--mm-green-dark); }
+    .mm-resultbar { position:sticky; top:calc(64px + env(safe-area-inset-top,0px)); z-index:30; display:flex; flex-wrap:wrap;
+      align-items:center; gap:8px 10px; padding:10px 20px; background:rgba(250,250,247,.96); border-bottom:1px solid var(--mm-line);
+      -webkit-backdrop-filter:blur(6px); backdrop-filter:blur(6px); }
+    .mm-count { font-size:14px; color:var(--mm-ink2); white-space:nowrap; }
+    .mm-count strong { font-size:18px; font-weight:800; color:var(--mm-ink); margin-right:2px; }
+    .mm-resultbar .mm-select { margin-left:auto; height:40px; }
+    .mm-chips { flex:1 1 100%; display:flex; align-items:center; gap:6px; overflow-x:auto; padding-bottom:2px; }
+    .mm-chip { display:inline-flex; align-items:center; gap:6px; flex-shrink:0; height:32px; padding:0 10px 0 12px; box-sizing:border-box;
+      border-radius:999px; border:1.5px solid var(--mm-line); background:var(--mm-bg); color:var(--mm-ink);
+      font-family:inherit; font-size:13px; font-weight:700; white-space:nowrap; cursor:pointer; }
+    .mm-chip .mm-icon { color:var(--mm-ink3); }
+    .mm-list { max-width:760px; margin:0 auto; }
+    .mm-notice { display:flex; align-items:center; gap:10px; margin:12px auto 0; max-width:736px; padding:12px 14px;
+      background:var(--mm-green-soft); border:1.5px solid var(--mm-green); border-radius:14px; color:var(--mm-green-dark); }
+    .mm-notice-text { display:flex; flex-direction:column; gap:2px; font-size:13px; color:var(--mm-ink2); }
+    .mm-notice-text strong { font-size:15px; color:var(--mm-green-dark); }
+    .mm-notice .mm-search-clear { margin-left:auto; margin-right:0; }
+    .mm-fab { position:fixed; right:20px; bottom:calc(20px + env(safe-area-inset-bottom,0px)); z-index:100; }
+    .mm-intro { text-align:center; padding:48px 24px 40px; background:var(--mm-bg); border-bottom:1px solid var(--mm-line); }
+    .mm-intro > * { max-width:640px; margin-left:auto; margin-right:auto; }
+    .mm-intro-eyebrow { margin:0 auto 18px; font-size:12px; font-weight:800; letter-spacing:.32em; color:var(--mm-green); }
+    .mm-intro-title { margin:0 auto 24px; font-family:"Zen Old Mincho","Hiragino Mincho ProN","Yu Mincho",serif; font-weight:600;
+      font-size:clamp(28px,5.2vw,46px); line-height:1.45; letter-spacing:.06em; color:var(--mm-ink); }
+    .mm-intro-lead, .mm-intro-body { margin:0 auto 12px; font-size:15px; line-height:2; letter-spacing:.02em; color:var(--mm-ink2); }
+    .mm-intro-lead strong { color:var(--mm-green-dark); font-weight:800; }
+    .mm-intro-body mark { background:linear-gradient(transparent 62%, rgba(243,156,18,.35) 62%); color:var(--mm-ink); font-weight:800; padding:0 2px; }
+    .mm-heading-mincho { font-family:"Zen Old Mincho","Hiragino Mincho ProN","Yu Mincho",serif !important; font-weight:600 !important; }
+    @media (max-width:600px) {
+      .mm-topbar { padding-left:12px; padding-right:12px; gap:6px; }
+      .mm-logo { gap:6px; }
+      .mm-logo-sub { font-size:13px; letter-spacing:.02em; }
+      .mm-btn { height:40px; padding:0 14px; font-size:13px; }
+      .mm-btn-lg { height:48px; padding:0 22px; font-size:15px; }
+      .mm-iconbtn { width:40px; height:40px; }
+      .mm-wide { display:none; }
+      .mm-toolbar { flex-wrap:wrap; gap:8px; padding:10px 12px; }
+      .mm-search { flex:1 1 100%; height:40px; }
+      .mm-search input { font-size:16px; } /* 16px未満だとiPhoneが入力時に画面を拡大してしまう */
+      .mm-toolbar .mm-select { flex:1 1 calc(50% - 4px); min-width:0; height:40px; font-size:13px; }
+      .mm-resultbar { padding:8px 12px; }
+      .mm-resultbar .mm-select select { font-size:13px; }
+      .mm-intro { padding:36px 20px 28px; }
+      .mm-intro-title { letter-spacing:.04em; margin-bottom:20px; }
+      .mm-intro-lead, .mm-intro-body { font-size:14px; }
+      .mm-fab { right:14px; }
+    }
   `;
   document.head.appendChild(el);
 }
