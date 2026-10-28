@@ -1699,7 +1699,7 @@ function useIsMobile(breakpoint = 767) {
 }
 
 // mobile: 縦積みレイアウト / allowPinEdit: ピン調整UIの表示（お客様モードでは false）
-function MapView({ posts, addPost, updatePost, stores, tags, settings, updateSettings, mobile = false, allowPinEdit = true, embedded = false, postsLoading = false, postsLoadError = false, requestPhotos }) {
+function MapView({ posts, addPost, updatePost, stores, tags, settings, updateSettings, mobile = false, allowPinEdit = true, embedded = false, postsLoading = false, postsLoadError = false, requestPhotos, onPost }) {
   const tagMap = useMemo(() => Object.fromEntries((tags || []).map(t => [t.key, t])), [tags]);
   const [showForm, setShowForm] = useState(false);
   const [detailPost, setDetailPost] = useState(null);  // 投稿詳細モーダル
@@ -1831,8 +1831,11 @@ function MapView({ posts, addPost, updatePost, stores, tags, settings, updateSet
   const pendingFilter = useRef(null);                    // エリアのシートで地域を切り替えたとき、切替後に当てる県・区
   const [time, setTime] = useState(new Date());
   const [regionIdx, setRegionIdx] = useState(0);
-  const [slideshow, setSlideshow] = useState(true);
-  const [pinnedRegion, setPinnedRegion] = useState(null);
+  // PC は地域を自動で切り替えず、投稿を1件ずつ切り替える（地域は全国から）
+  const [slideshow, setSlideshow] = useState(mobile);
+  const [pinnedRegion, setPinnedRegion] = useState(mobile ? null : '全国');
+  const [q, setQ] = useState('');                        // PC ヘッダーのキーワード検索
+  const [focusPost, setFocusPost] = useState(null);      // スポットライトで表示中の投稿（地図のピンと連動）
 
   // 投稿のある地域
   const activeRegions = useMemo(() => {
@@ -1943,12 +1946,15 @@ function MapView({ posts, addPost, updatePost, stores, tags, settings, updateSet
   }, [currentRegion]);
 
   // 一覧に出す投稿。「面白い」と並び替えは一覧だけに効かせ、地図のピン件数には影響させない
-  const listPosts = useMemo(
-    () => sortPosts(featuredOnly ? visiblePosts.filter(p => p.featured) : visiblePosts, sort),
-    [visiblePosts, featuredOnly, sort]);
-  const pcFiltering = selTags.length > 0 || featuredOnly || !!prefFilter || !!subFilter;
-  const listEmptyText = featuredOnly && selTags.length === 0 && !prefFilter && !subFilter
-    ? 'まだ「面白い投稿」が選ばれていません'
+  const listPosts = useMemo(() => {
+    let list = featuredOnly ? visiblePosts.filter(p => p.featured) : visiblePosts;
+    const words = q.trim().toLowerCase().split(/\s+/).filter(Boolean);   // 空白区切りはAND
+    if (words.length) list = list.filter(p => { const t = postSearchText(p, tagMap); return words.every(w => t.includes(w)); });
+    return sortPosts(list, sort);
+  }, [visiblePosts, featuredOnly, sort, q, tagMap]);
+  const pcFiltering = selTags.length > 0 || featuredOnly || !!prefFilter || !!subFilter || !!q.trim();
+  const listEmptyText = featuredOnly && selTags.length === 0 && !prefFilter && !subFilter && !q.trim()
+    ?'まだ「面白い投稿」が選ばれていません'
     : pcFiltering ? '条件に合う投稿がありませんでした' : 'まだ投稿がありません';
 
   // --- 一覧のエリア／ジャンル（スマホと同じシートを使う） ---
@@ -1984,7 +1990,8 @@ function MapView({ posts, addPost, updatePost, stores, tags, settings, updateSet
   const closeListSheet = useCallback(() => setSheet(null), []);
 
   // 一覧は自動で流れて次々に画面に入るので、並び順どおりにカバー写真を先読みしておく
-  useEffect(() => { requestPhotos?.(listPosts.map(p => p.id)); }, [listPosts]);
+  // PC はスポットライトが表示中と次の投稿の分だけ取るので、ここではスマホのときだけ
+  useEffect(() => { if (mobile) requestPhotos?.(listPosts.map(p => p.id)); }, [listPosts]);
 
   // ピンで選んだら、その地域でスライドショーを止める（選んだ条件が次の地域で消えないように）
   const holdRegion = () => { setSlideshow(false); setPinnedRegion(currentRegion); };
@@ -1998,7 +2005,7 @@ function MapView({ posts, addPost, updatePost, stores, tags, settings, updateSet
   const pcGenreLabel = selTags.length === 0 ? 'ジャンル'
     : selTags.length === 1 ? (tagMap[selTags[0]]?.label || 'ジャンル') : `ジャンル ${selTags.length}`;
   const clearListFilters = () => {
-    setSelTags([]); setFeaturedOnly(false); setPrefFilter(''); setSubFilter('');
+    setSelTags([]); setFeaturedOnly(false); setPrefFilter(''); setSubFilter(''); setQ('');
     if (!slideshow) setPinnedRegion('全国');
   };
 
@@ -2087,6 +2094,175 @@ function MapView({ posts, addPost, updatePost, stores, tags, settings, updateSet
 
   if (showForm) {
     return <PostForm onSubmit={(p) => { addPost(p); }} onCancel={() => setShowForm(false)} stores={stores} tags={tags}/>;
+  }
+
+  // ===== PC（タブレットはスマホと同じ一覧）：左に地図、右に投稿を1件ずつ大きく =====
+  if (!mobile) {
+    const focusKey = focusPost ? postPinKey(focusPost, stores) : '';
+    const focusInfo = focusKey ? getPinInfo(focusKey) : null;
+    const focusTip = focusInfo && {
+      name: focusInfo.name,
+      count: pins[focusKey] || 0,
+      title: focusPost ? (splitPostText(focusPost).title || focusPost.penname) : '',
+    };
+    const listTitle = pcSubName || (currentRegion === '全国' ? '全国' : currentRegion);
+    const pickRegion = (r) => { setSlideshow(false); setPinnedRegion(r); const idx = activeRegions.indexOf(r); if (idx !== -1) setRegionIdx(idx); };
+    return (
+      <div className="mn-screen mm-mon" style={embedded ? { height: '100%' } : undefined}>
+        <header className="mm-topbar mm-mon-top">
+          <span className="mm-logo" aria-label="街中マップ"><span className="mm-logo-box">街中</span><span className="mm-logo-sub">マップ</span></span>
+          <span className="mm-mon-tagline mm-heading-mincho">いつもの街に、まだ知らない出会いを。</span>
+          <span className="mm-spacer"/>
+          <label className="mm-search mm-mon-search">
+            <Icon name="search" size={18}/>
+            <input type="search" value={q} onChange={(e) => setQ(e.target.value)} placeholder="お店・地名・キーワードでさがす" aria-label="キーワードでさがす"/>
+            {q && <button type="button" className="mm-search-clear" onClick={() => setQ('')} aria-label="キーワードを消す"><Icon name="x" size={16}/></button>}
+          </label>
+          <button type="button" className="mm-btn primary" onClick={() => (onPost ? onPost() : setShowForm(true))}>
+            <Icon name="pen"/><span>投稿する</span>
+          </button>
+        </header>
+
+        <main className="mm-mon-main">
+          <section className="mm-mon-map" aria-label="地図">
+            <div className="mm-mon-mapbox" ref={containerRef}>
+              {currentRegion === '海外' ? (
+                <WorldMapView pins={pins} currentRegion={currentRegion} posts={posts}
+                  isPinMode={pinMode} onPinDrag={handlePinDrag}
+                  svgRef={mapSvgRef} pinOverrides={settings?.pinOverrides}/>
+              ) : currentRegion === '愛知' ? (
+                <AichiMapView posts={regionPosts} isPinMode={pinMode} onPinDrag={handlePinDrag}
+                  containerRef={mapSvgRef} pinOverrides={settings?.pinOverrides} selected={subFilter} onSelect={pickSubByPin}/>
+              ) : currentRegion === '荒川区' ? (
+                <ArakawaMapView posts={regionPosts} isPinMode={pinMode} onPinDrag={handlePinDrag}
+                  containerRef={mapSvgRef} pinOverrides={settings?.pinOverrides} selected={subFilter} onSelect={pickSubByPin}/>
+              ) : currentRegion === '東京23区' ? (
+                <TokyoMapView posts={regionPosts} isPinMode={pinMode} onPinDrag={handlePinDrag}
+                  containerRef={mapSvgRef} pinOverrides={settings?.pinOverrides} selected={subFilter} onSelect={pickSubByPin}/>
+              ) : (
+                <JapanMapView pins={pins} currentRegion={currentRegion} viewBox={viewBox} getPinInfo={getPinInfo}
+                  stores={stores} isPinMode={pinMode} onPinDrag={handlePinDrag} svgRef={mapSvgRef}
+                  selectedKey={prefFilter} onSelect={pickPrefByPin}
+                  variant="styled" focusKey={focusKey} focusTip={focusTip}
+                  focusPhoto={focusPost ? postPhotos(focusPost)[0] : undefined}/>
+              )}
+            </div>
+
+            <div className="mm-mon-areas" role="group" aria-label="地域">
+              {activeRegions.map(r => (
+                <button key={r} type="button" className={`mm-areachip${r === currentRegion ? ' is-on' : ''}`} onClick={() => pickRegion(r)} aria-pressed={r === currentRegion}>
+                  {r !== '全国' && <i style={{ background: areaColor(r) }}/>}{r}
+                </button>
+              ))}
+            </div>
+
+            {allowPinEdit && (
+              <button type="button" className={`mm-btn mm-mon-pinbtn${isPinMode ? ' is-on' : ''}`} onClick={() => setIsPinMode(v => !v)}>
+                <Icon name="pin" size={16}/><span>ピン調整</span>
+              </button>
+            )}
+            {allowPinEdit && isPinMode && (
+              <div style={{ position: 'absolute', top: 120, right: 16, zIndex: 20, background: 'rgba(255,255,255,0.95)', borderRadius: 10, padding: '10px 12px', boxShadow: '0 4px 16px rgba(0,0,0,0.15)', display: 'flex', flexDirection: 'column', gap: 6 }}>
+                {currentRegion !== '愛知' && currentRegion !== '荒川区' && currentRegion !== '東京23区' && (
+                  <>
+                    <div style={{ display: 'flex', gap: 4, justifyContent: 'center' }}>
+                      <button onClick={() => shiftAllPins(0, -0.01)} style={s.rowBtn}>↑</button>
+                    </div>
+                    <div style={{ display: 'flex', gap: 4 }}>
+                      <button onClick={() => shiftAllPins(-0.01, 0)} style={s.rowBtn}>←</button>
+                      <button onClick={() => shiftAllPins(0, 0.01)} style={s.rowBtn}>↓</button>
+                      <button onClick={() => shiftAllPins(0.01, 0)} style={s.rowBtn}>→</button>
+                    </div>
+                    <button onClick={commitAllPins} style={{ ...s.rowBtn, background: C.green, color: '#fff', borderColor: C.green, fontSize: '0.625rem', marginTop: 4, fontWeight: 700 }}>
+                      ✓ 現在位置を初期値として確定
+                    </button>
+                  </>
+                )}
+                <button onClick={copyPinExport} style={{ ...s.rowBtn, fontSize: '0.625rem', marginTop: 2 }}>📋 全ピンの座標をコピー（開発者用）</button>
+                <button onClick={resetAllPins} style={{ ...s.rowBtn, color: C.pink, borderColor: C.pink, fontSize: '0.625rem' }}>リセット</button>
+              </div>
+            )}
+
+            <div className="mm-mon-qr">
+              <QRView value={`${window.location.origin}/?customer=1`} size={84}/>
+              <p>あなたの「好き」も<br/>スマホで投稿</p>
+            </div>
+          </section>
+
+          <section className="mm-mon-list" aria-label="投稿">
+            <div className="mm-mon-head">
+              <h2 className="mm-heading-mincho">{listTitle}のおすすめ</h2>
+              <span className="mm-mon-count"><strong>{listPosts.length}</strong>件</span>
+              <div className="mm-mon-ctrls">
+                <button type="button" className={`mm-select${pcAreaPicked ? ' is-on' : ''}`} onClick={() => setSheet('area')} aria-label="エリアで絞り込む">
+                  <span className="mm-select-label">{pcAreaLabel}</span>
+                </button>
+                <button type="button" className={`mm-select${selTags.length ? ' is-on' : ''}`} onClick={() => setSheet('genre')} aria-label="ジャンルで絞り込む">
+                  <span className="mm-select-label">{pcGenreLabel}</span>
+                </button>
+                <button type="button" className={`mm-btn${featuredOnly ? ' is-on' : ''}`} onClick={() => setFeaturedOnly(v => !v)} aria-pressed={featuredOnly}>
+                  <Icon name="star" size={16}/><span>面白い</span>
+                </button>
+                <label className="mm-select">
+                  <select value={sort} onChange={(e) => setSort(e.target.value)} aria-label="並び替え">
+                    {SORTS.map(o => <option key={o.key} value={o.key}>{o.label}</option>)}
+                  </select>
+                </label>
+              </div>
+            </div>
+            {pcFiltering && (
+              <div className="mm-chips mm-mon-chips">
+                {pcSubName && (
+                  <button type="button" className="mm-chip" onClick={() => { setPrefFilter(''); setSubFilter(''); }} aria-label="エリアの条件を外す">
+                    <Icon name="pin" size={14}/><span>{pcAreaLabel}</span><Icon name="x" size={14}/>
+                  </button>
+                )}
+                {q.trim() && (
+                  <button type="button" className="mm-chip" onClick={() => setQ('')} aria-label="キーワードの条件を外す">
+                    <Icon name="search" size={14}/><span>{q.trim()}</span><Icon name="x" size={14}/>
+                  </button>
+                )}
+                {selTags.map(k => tagMap[k] && (
+                  <button key={k} type="button" className="mm-chip" onClick={() => setSelTags(selTags.filter(x => x !== k))} aria-label={`${tagMap[k].label}の条件を外す`}>
+                    <Icon name="tag" size={14}/><span>{tagMap[k].label}</span><Icon name="x" size={14}/>
+                  </button>
+                ))}
+                {featuredOnly && (
+                  <button type="button" className="mm-chip" onClick={() => setFeaturedOnly(false)} aria-label="面白いの条件を外す">
+                    <Icon name="star" size={14}/><span>面白い</span><Icon name="x" size={14}/>
+                  </button>
+                )}
+                <button type="button" className="mm-textlink" onClick={clearListFilters}>すべて解除</button>
+              </div>
+            )}
+            {listPosts.length > 0 ? (
+              <Spotlight posts={listPosts} tagMap={tagMap} requestPhotos={requestPhotos} onOpen={setDetailPost} onFocus={setFocusPost}/>
+            ) : (
+              <div className="mm-mon-empty">
+                {postsLoading && posts.length === 0 ? <LoadingNote/>
+                  : postsLoadError && posts.length === 0 ? <LoadingNote error/>
+                  : <p>{listEmptyText}</p>}
+              </div>
+            )}
+          </section>
+        </main>
+
+        {sheet === 'area' && (
+          <AreaSheet rows={areaSheetRows} allCount={areaSheetCount('', '')}
+            initArea={currentRegion === '全国' ? '' : currentRegion}
+            initSub={regionSubKind(currentRegion) === 'pref' ? prefFilter : subFilter}
+            countFor={areaSheetCount} onApply={applyAreaSheet} onClose={closeListSheet}/>
+        )}
+        {sheet === 'genre' && (
+          <GenreSheet tags={tags} base={genreSheetBase} init={selTags}
+            onApply={(ts) => { setSelTags(ts); setSheet(null); }} onClose={closeListSheet}/>
+        )}
+        {detailPost && (
+          <PostDetailModal post={posts.find(p => p.id === detailPost.id) || detailPost}
+            updatePost={updatePost} tagMap={tagMap} requestPhotos={requestPhotos} onClose={() => setDetailPost(null)}/>
+        )}
+      </div>
+    );
   }
 
   return (
@@ -2355,7 +2531,10 @@ function MapView({ posts, addPost, updatePost, stores, tags, settings, updateSet
   );
 }
 
-function JapanMapView({ pins, currentRegion, viewBox, getPinInfo, stores, isPinMode, onPinDrag, svgRef, selectedKey, onSelect }) {
+// variant="styled" は PC 版の見た目（陸を白・海を薄緑にした地図、件数入りの緑ピン）。
+// focusKey のピンだけ写真入りで大きくし、吹き出し（focusTip）を出す。
+function JapanMapView({ pins, currentRegion, viewBox, getPinInfo, stores, isPinMode, onPinDrag, svgRef, selectedKey, onSelect, variant, focusKey, focusPhoto, focusTip }) {
+  const styled = variant === 'styled';
   const isAll = currentRegion === '全国';
   const isStore = Object.values(stores).some(st => st.name === currentRegion);
   const isRegion = !isAll && !isStore && REGION_BOUNDS[currentRegion] && currentRegion !== '海外';
@@ -2401,6 +2580,9 @@ function JapanMapView({ pins, currentRegion, viewBox, getPinInfo, stores, isPinM
     }
   }
 
+  // PC の全国表示は海の余白を少し削って地図を大きく見せる
+  if (styled && isAll && !isPinMode) vb = '80 20 920 647';
+
   // viewBox幅からピン縮小スケールを計算（ズーム時は画面上のピンが大きすぎないよう縮小）
   const vbParts = vb.split(' ').map(Number);
   const vbW = vbParts[2] || VW;
@@ -2419,17 +2601,27 @@ function JapanMapView({ pins, currentRegion, viewBox, getPinInfo, stores, isPinM
       </defs>
 
       {/* 背景：日本地図画像 — 店舗ズーム時は鮮明に、通常はシンプル線画風 */}
-      <image
-        href={JAPAN_MAP_IMG}
-        x="0" y="0" width={VW} height={VH}
-        preserveAspectRatio="xMidYMid meet"
-        style={{ filter: isStore ? 'grayscale(1) contrast(12) brightness(3)' : (isPinMode ? 'grayscale(0.3) contrast(1.5) brightness(1.2)' : 'grayscale(1) contrast(8) brightness(2)') }}
-        opacity={isStore ? 0.45 : (isPinMode ? 0.7 : 0.2)}
-      />
+      {styled && !isPinMode ? (
+        <image href="/japan-map-styled.jpg" x="0" y="0" width={VW} height={VH} preserveAspectRatio="xMidYMid meet"/>
+      ) : (
+        <image
+          href={JAPAN_MAP_IMG}
+          x="0" y="0" width={VW} height={VH}
+          preserveAspectRatio="xMidYMid meet"
+          style={{ filter: isStore ? 'grayscale(1) contrast(12) brightness(3)' : (isPinMode ? 'grayscale(0.3) contrast(1.5) brightness(1.2)' : 'grayscale(1) contrast(8) brightness(2)') }}
+          opacity={isStore ? 0.45 : (isPinMode ? 0.7 : 0.2)}
+        />
+      )}
 
 
       {/* 海外マーカー（全国表示時） */}
-      {isAll && pins['overseas'] && (
+      {styled && !isPinMode && isAll && pins['overseas'] ? (
+        <g filter="url(#shadow)">
+          <rect x="100" y="40" width="170" height="64" rx="18" fill="#fff"/>
+          <text x="122" y="81" fontSize="22" fontWeight="800" fill={C.ink} style={{ fontFamily: FONT_BODY }}>🌍 海外</text>
+          <text x="248" y="83" fontSize="28" fontWeight="800" fill={C.green} textAnchor="end" style={{ fontFamily: FONT_LATIN }}>{pins['overseas']}</text>
+        </g>
+      ) : isAll && pins['overseas'] && (
         <g filter="url(#shadow)">
           <rect x="30" y="30" width="160" height="100" rx="8" fill={C.green} opacity="0.9"/>
           <text x="110" y="65" fontSize="16" fontWeight="700" fill="#fff" textAnchor="middle" style={{ fontFamily: FONT_DISPLAY, letterSpacing: 4 }}>🌍 海外</text>
@@ -2467,6 +2659,21 @@ function JapanMapView({ pins, currentRegion, viewBox, getPinInfo, stores, isPinM
           const filterKey = key.startsWith('store:') ? key.slice(6) : key;
           const isSelected = !!selectedKey && selectedKey === filterKey;
           const canSelect = !isPinMode && typeof onSelect === 'function';
+          if (styled && !isPinMode) {
+            if (key === focusKey) return null;   // 表示中の投稿のピンは最後に前面へ描く
+            const r = (14 + Math.min(10, Math.sqrt(count) * 2.5)) * Math.max(0.6, pinScale);
+            return (
+              <g key={key} style={{ cursor: canSelect ? 'pointer' : undefined }}
+                 onClick={canSelect ? () => onSelect(isSelected ? '' : filterKey) : undefined}>
+                {canSelect && <circle cx={px} cy={py} r={r + 10} fill="transparent"/>}
+                <circle cx={px} cy={py} r={r} fill={info.isStore ? C.pink : C.green}
+                  stroke={isSelected ? C.ink : '#fff'} strokeWidth={isSelected ? 4 : 3} filter="url(#shadow)"/>
+                {count > 1 && (
+                  <text x={px} y={py + r * 0.36} fontSize={r * 1.05} fontWeight="800" fill="#fff" textAnchor="middle" style={{ fontFamily: FONT_LATIN }}>{count}</text>
+                )}
+              </g>
+            );
+          }
           return (
             <g key={key} filter="url(#shadow)" opacity={isCurrent ? 1 : 0.25}
                style={{ cursor: isPinMode ? 'grab' : (canSelect ? 'pointer' : undefined) }}
@@ -2488,6 +2695,46 @@ function JapanMapView({ pins, currentRegion, viewBox, getPinInfo, stores, isPinM
             </g>
           );
         });
+      })()}
+
+      {/* 表示中の投稿のピン：写真入りで大きく、輪が広がる。吹き出しで県名と件数を出す */}
+      {styled && !isPinMode && focusKey && (() => {
+        const info = getPinInfo(focusKey);
+        if (!info || !(isAll || info.region === currentRegion)) return null;
+        const k = Math.max(0.6, pinScale);
+        const px = info.x * VW, py = info.y * VH, r = 42 * k;
+        const color = info.isStore ? C.pink : C.green;
+        const tw = 310 * k, th = 108 * k;
+        const flip = info.x > 0.62;   // 右端に近いときは吹き出しを左側に出す
+        const tx = flip ? px - r - 14 * k - tw : px + r + 14 * k;
+        const ty = py - th / 2;
+        const clipId = 'mm-focus-clip';
+        return (
+          <g key={focusKey} pointerEvents="none">
+            <circle cx={px} cy={py} r={r} fill="none" stroke={color} strokeWidth={4 * k}>
+              <animate attributeName="r" from={r} to={r * 1.9} dur="1.8s" repeatCount="indefinite"/>
+              <animate attributeName="opacity" from="0.8" to="0" dur="1.8s" repeatCount="indefinite"/>
+            </circle>
+            <clipPath id={clipId}><circle cx={px} cy={py} r={r}/></clipPath>
+            <circle cx={px} cy={py} r={r + 4 * k} fill="#fff" filter="url(#shadow)"/>
+            {focusPhoto
+              ? <image href={focusPhoto} x={px - r} y={py - r} width={r * 2} height={r * 2} preserveAspectRatio="xMidYMid slice" clipPath={`url(#${clipId})`}/>
+              : <circle cx={px} cy={py} r={r} fill={color}/>}
+            <circle cx={px} cy={py} r={r} fill="none" stroke={color} strokeWidth={4 * k}/>
+            {focusTip && (
+              <g>
+                <rect x={tx} y={ty} width={tw} height={th} rx={14 * k} fill="#fff" filter="url(#shadow)"/>
+                <text x={tx + 20 * k} y={ty + 36 * k} fontSize={26 * k} fontWeight="800" fill={C.ink} style={{ fontFamily: FONT_BODY }}>{focusTip.name}</text>
+                <text x={tx + 20 * k} y={ty + 66 * k} fontSize={20 * k} fontWeight="800" fill={C.greenDark} style={{ fontFamily: FONT_BODY }}>{focusTip.count}件のおすすめ</text>
+                {focusTip.title && (
+                  <text x={tx + 20 * k} y={ty + 93 * k} fontSize={19 * k} fill={C.inkSub} style={{ fontFamily: FONT_BODY }}>
+                    {focusTip.title.length > 13 ? `${focusTip.title.slice(0, 13)}…` : focusTip.title}
+                  </text>
+                )}
+              </g>
+            )}
+          </g>
+        );
       })()}
     </svg>
   );
@@ -3914,6 +4161,164 @@ const regionSubLabel = (r, k) => regionSubKind(r) === 'pref' ? (PREFS[k]?.name |
 const inMapRegion = (p, r) =>
   r === '全国' ? true : r === '愛知' ? p.prefecture === 'aichi' : r === '東京23区' ? p.prefecture === 'tokyo' : p.region === r;
 
+// キーワード検索の対象にする文字（スマホ一覧・PC共通）
+const postSearchText = (p, tagMap) => [
+  p.message, p.penname, p.prefectureName, p.storeName,
+  p.tokyoWard, p.arakawaSubRegion, p.aichiSubRegion, p.country,
+  p.detail?.name,
+  ...(p.tags || []).map(k => tagMap[k]?.label || k),
+].filter(Boolean).join(' ').toLowerCase();
+
+// =====================================
+// PC：投稿を1件ずつ大きく見せるスポットライト
+// =====================================
+const SPOT_MIN_MS = 8000;     // 1件を出しておく最短時間
+const SPOT_PHOTO_MS = 2000;   // 写真が複数あるときの1枚あたりの時間
+const postPhotos = (p) => (p.photos && p.photos.length > 0) ? p.photos : (p.photo ? [p.photo] : []);
+const postPinKey = (p, stores) => (p.storeId && stores[p.storeId]) ? `store:${p.storeId}` : p.prefecture;
+
+// 1行目が短ければそれを見出しに、残りを本文にする。1行だけの投稿は見出しなし
+function splitPostText(p) {
+  const msg = (p.message || '').trim();
+  const lines = msg.split('\n');
+  const first = lines[0].trim();
+  if (lines.length > 1 && first && first.length <= 30) {
+    return { title: first, body: lines.slice(1).join('\n').trim() };
+  }
+  if (msg.length <= 24) return { title: msg, body: '' };
+  return { title: p.detail?.name || '', body: msg };
+}
+
+const spotPlace = (p) => p.region === '海外'
+  ? (p.country || '海外')
+  : [p.prefectureName, p.tokyoWard || p.arakawaSubRegion || p.aichiSubRegion].filter(Boolean).join('　');
+
+// 写真の縦横で並び方（縦長＝写真が左／横長＝写真が上）を決める。投稿ごとに1回だけ測る
+const photoOrient = new Map();
+function measureOrient(id, src, done) {
+  if (!src || photoOrient.has(id)) return;
+  const img = new Image();
+  img.onload = () => {
+    photoOrient.set(id, img.naturalHeight > img.naturalWidth * 1.05 ? 'tall' : 'wide');
+    done?.();
+  };
+  img.src = src;
+}
+
+function SpotCard({ post, tagMap, slide, progress, index, total, leaving, onOpen }) {
+  const photos = postPhotos(post);
+  const loading = post.photo === undefined;
+  const layout = (!loading && photos.length > 0 && photoOrient.get(post.id)) || 'wide';
+  const { title, body } = splitPostText(post);
+  const by = <div className="mm-spot-by"><small>by</small>{post.penname || '名無し'}</div>;
+  return (
+    <article className={`mm-spot is-${layout}${leaving ? ' is-leaving' : ''}`}
+      role="button" tabIndex={leaving ? -1 : 0} aria-label={`${title || post.prefectureName}の投稿を開く`}
+      onClick={() => !leaving && onOpen(post)}
+      onKeyDown={(e) => { if (!leaving && (e.key === 'Enter' || e.key === ' ')) { e.preventDefault(); onOpen(post); } }}>
+      <div className="mm-spot-photo">
+        {loading ? (
+          <div className="mm-spot-empty"><Icon name="image" size={28}/><span>写真を読み込み中…</span></div>
+        ) : photos.length > 0 ? (
+          <div className="mm-spot-track" style={{ transform: `translateX(-${slide * 100}%)` }}>
+            {photos.map((src, i) => (
+              <div className="mm-spot-slide" key={i}>
+                <img className="mm-spot-blur" src={src} alt="" aria-hidden="true"/>
+                <img className="mm-spot-img" src={src} alt=""/>
+              </div>
+            ))}
+          </div>
+        ) : (
+          <div className="mm-spot-empty is-text"><span className="mm-heading-mincho">{post.prefectureName || post.country || '街中マップ'}</span></div>
+        )}
+        <span className="mm-spot-place"><i style={{ background: areaColor(post.region) }}/>{spotPlace(post)}</span>
+        {photos.length > 1 && (
+          <div className="mm-spot-dots" aria-hidden="true">{photos.map((_, i) => <i key={i} className={i === slide ? 'is-on' : ''}/>)}</div>
+        )}
+      </div>
+      <div className="mm-spot-body">
+        <div className="mm-spot-top">
+          <div className="mm-spot-tags">
+            {(post.tags || []).map(k => tagMap[k] && (
+              <span key={k} className="mm-spot-tag" style={{ color: tagMap[k].color, background: `${tagMap[k].color}1A` }}>#{tagMap[k].label}</span>
+            ))}
+          </div>
+          {layout === 'wide' && by}
+        </div>
+        {title && <h3 className="mm-spot-title mm-heading-mincho"><Phrases text={title}/></h3>}
+        {body && <p className="mm-spot-text">{body}</p>}
+        {layout === 'tall' && by}
+        <div className="mm-spot-prog">
+          <span className="mm-spot-bar"><i style={{ width: `${Math.min(100, progress * 100)}%` }}/></span>
+          <span>{index + 1} / {total}</span>
+        </div>
+      </div>
+    </article>
+  );
+}
+
+function Spotlight({ posts, tagMap, requestPhotos, onOpen, onFocus }) {
+  const [idx, setIdx] = useState(0);
+  const [elapsed, setElapsed] = useState(0);
+  const [hover, setHover] = useState(false);
+  const [, bump] = useState(0);                  // 写真の縦横が分かったら描き直す
+  const [leaving, setLeaving] = useState(null);  // 切り替え時にふわっと消えていく前の投稿 { post, slide }
+  const prevRef = useRef(null);
+  const lastSlide = useRef(0);
+
+  const n = posts.length;
+  const listKey = posts.map(p => p.id).join(',');
+  useEffect(() => { setIdx(0); setElapsed(0); }, [listKey]);
+
+  const cur = n ? posts[idx % n] : null;
+  const next = n > 1 ? posts[(idx + 1) % n] : null;
+  const photos = cur ? postPhotos(cur) : [];
+  const dur = Math.max(SPOT_MIN_MS, photos.length * SPOT_PHOTO_MS);
+
+  // 表示中と次の投稿の写真を全部取りに行き、縦横も先に測っておく
+  useEffect(() => { if (cur) requestPhotos?.(next ? [cur.id, next.id] : [cur.id], true); }, [cur?.id, next?.id]);
+  useEffect(() => { if (cur) measureOrient(cur.id, postPhotos(cur)[0], () => bump(v => v + 1)); }, [cur?.id, cur?.photo]);
+  useEffect(() => { if (next) measureOrient(next.id, postPhotos(next)[0]); }, [next?.id, next?.photo]);
+
+  // マウスを乗せている間は止める（PCで読んでいる途中に切り替わらないように）
+  useEffect(() => {
+    if (n === 0 || hover) return;
+    const t = setInterval(() => setElapsed(e => e + 100), 100);
+    return () => clearInterval(t);
+  }, [n, hover]);
+  useEffect(() => {
+    if (n > 0 && elapsed >= dur) { setIdx(i => (i + 1) % n); setElapsed(0); }
+  }, [elapsed, dur, n]);
+
+  useEffect(() => {
+    const prev = prevRef.current;
+    prevRef.current = cur;
+    onFocus?.(cur);
+    if (prev && cur && prev.id !== cur.id) {
+      setLeaving({ post: prev, slide: lastSlide.current });
+      const t = setTimeout(() => setLeaving(null), 700);
+      return () => clearTimeout(t);
+    }
+  }, [cur?.id]);
+  useEffect(() => { if (cur) onFocus?.(cur); }, [cur?.photo]);
+
+  const slide = photos.length > 1 ? Math.floor(elapsed / SPOT_PHOTO_MS) % photos.length : 0;
+  // 上の切り替え処理より後に置く（切り替え直前の写真位置を覚えておき、消えていく投稿をその位置のまま出す）
+  useEffect(() => { lastSlide.current = slide; });
+
+  if (!cur) return null;
+  return (
+    <div className="mm-spot-stage" onMouseEnter={() => setHover(true)} onMouseLeave={() => setHover(false)}>
+      {leaving && leaving.post.id !== cur.id && (
+        <SpotCard key={`leave-${leaving.post.id}`} post={leaving.post} tagMap={tagMap} slide={leaving.slide} progress={1}
+          index={idx} total={n} leaving onOpen={onOpen}/>
+      )}
+      <SpotCard key={cur.id} post={cur} tagMap={tagMap} slide={slide} progress={elapsed / dur}
+        index={idx % n} total={n} onOpen={onOpen}/>
+    </div>
+  );
+}
+
 // =====================================
 // スマホ用：下から出てくるシート
 // =====================================
@@ -4077,12 +4482,7 @@ function CustomerBrowse({ posts, updatePost, tags, postsLoading = false, postsLo
   const [sheet, setSheet] = useState(null);     // 'area' | 'genre' | null
   const [detailPost, setDetailPost] = useState(null);
 
-  const searchIndex = useCallback((p) => [
-    p.message, p.penname, p.prefectureName, p.storeName,
-    p.tokyoWard, p.arakawaSubRegion, p.aichiSubRegion, p.country,
-    p.detail?.name,
-    ...(p.tags || []).map(k => tagMap[k]?.label || k),
-  ].filter(Boolean).join(' ').toLowerCase(), [tagMap]);
+  const searchIndex = useCallback((p) => postSearchText(p, tagMap), [tagMap]);
 
   const byKeyword = useMemo(() => {
     const kw = q.trim().toLowerCase();
@@ -4300,11 +4700,9 @@ function CustomerPostPage({ posts, addPost, updatePost, stores, tags, settings, 
             settings={settings} updateSettings={() => {}}
             mobile={false} allowPinEdit={false} embedded
             postsLoading={postsLoading} postsLoadError={postsLoadError} requestPhotos={requestPhotos}
+            onPost={goPost}
           />
         </div>
-        <button type="button" onClick={goPost} className="mm-btn primary mm-btn-lg mm-fab">
-          <Icon name="pen"/><span>投稿する</span>
-        </button>
       </div>
     );
   }
@@ -7368,6 +7766,93 @@ if (typeof document !== 'undefined' && !document.getElementById('mn-global-style
     .mm-intro-lead strong { color:var(--mm-green-dark); font-weight:800; }
     .mm-intro-body mark { background:linear-gradient(transparent 62%, rgba(243,156,18,.35) 62%); color:var(--mm-ink); font-weight:800; padding:0 2px; }
     .mm-heading-mincho { font-family:"Zen Old Mincho","Hiragino Mincho ProN","Yu Mincho",serif !important; font-weight:600 !important; }
+    /* ===== PC：左に地図、右に投稿を1件ずつ大きく（店頭モニター兼用） ===== */
+    .mm-mon { display:flex; flex-direction:column; overflow:hidden; background:var(--mm-bg2); color:var(--mm-ink);
+      font-family:"M PLUS Rounded 1c","Hiragino Maru Gothic ProN",system-ui,sans-serif; }
+    .mm-mon-top { position:relative; flex-shrink:0; }
+    .mm-mon-tagline { padding-left:14px; margin-left:4px; border-left:1px solid var(--mm-line); font-size:13px; letter-spacing:.06em; color:var(--mm-ink2); white-space:nowrap; }
+    .mm-mon-search { flex:0 1 340px; }
+    .mm-mon-main { flex:1 1 0%; min-height:0; display:grid; grid-template-columns:minmax(0,42fr) minmax(0,58fr); }
+    .mm-mon-map { position:relative; min-width:0; overflow:hidden; background:#EAF0EC; }
+    .mm-mon-mapbox { position:absolute; inset:96px 8px 128px; display:flex; align-items:center; justify-content:center; }
+    .mm-mon-mapbox > * { max-width:100%; max-height:100%; }
+    .mm-mon-areas { position:absolute; top:18px; left:20px; right:20px; display:flex; flex-wrap:wrap; gap:6px; z-index:5; }
+    .mm-areachip { display:inline-flex; align-items:center; gap:6px; height:34px; padding:0 12px; box-sizing:border-box; border-radius:999px;
+      border:1.5px solid rgba(0,0,0,.06); background:rgba(255,255,255,.92); color:var(--mm-ink2); font-family:inherit; font-size:13px; font-weight:700;
+      white-space:nowrap; cursor:pointer; box-shadow:0 2px 6px rgba(0,0,0,.05); }
+    .mm-areachip i { width:7px; height:7px; border-radius:50%; flex-shrink:0; }
+    .mm-areachip.is-on { background:var(--mm-ink); border-color:var(--mm-ink); color:#fff; }
+    .mm-mon-pinbtn { position:absolute; top:70px; right:16px; z-index:6; height:36px; font-size:13px; }
+    .mm-mon-qr { position:absolute; left:20px; bottom:22px; z-index:5; display:flex; align-items:center; gap:14px; padding:12px 18px 12px 12px;
+      border-radius:14px; background:var(--mm-ink); color:#fff; box-shadow:0 8px 24px rgba(0,0,0,.14); }
+    .mm-mon-qr > div { border-radius:6px; overflow:hidden; flex-shrink:0; }
+    .mm-mon-qr p { margin:0; font-size:17px; font-weight:800; line-height:1.5; }
+    .mm-mon-list { display:flex; flex-direction:column; min-width:0; min-height:0; background:var(--mm-bg); border-left:1px solid var(--mm-line); }
+    .mm-mon-head { display:flex; align-items:center; gap:12px; padding:14px 24px; border-bottom:1px solid var(--mm-line); }
+    .mm-mon-head h2 { margin:0; font-size:24px; letter-spacing:.06em; white-space:nowrap; }
+    .mm-mon-count { font-size:14px; color:var(--mm-ink2); white-space:nowrap; }
+    .mm-mon-count strong { font-size:18px; font-weight:800; color:var(--mm-ink); margin-right:1px; }
+    .mm-mon-ctrls { margin-left:auto; display:flex; gap:6px; min-width:0; }
+    .mm-mon-ctrls .mm-select, .mm-mon-ctrls .mm-btn { height:38px; font-size:13px; }
+    .mm-mon-ctrls .mm-select { padding-left:14px; padding-right:32px; }
+    .mm-mon-ctrls .mm-select select { font-size:13px; }
+    .mm-mon-ctrls .mm-btn { padding:0 14px; }
+    .mm-mon-chips { flex:0 0 auto; padding:10px 24px 0; }
+    .mm-mon-empty { flex:1; display:grid; place-items:center; padding:24px; color:var(--mm-ink2); font-size:15px; }
+    /* スポットライト：縦長の写真は左右（is-tall）、横長の写真は上下（is-wide）に並べる */
+    .mm-spot-stage { position:relative; flex:1 1 0%; min-height:0; margin:18px 24px 24px; }
+    .mm-spot { position:absolute; inset:0; display:grid; overflow:hidden; border-radius:22px; background:#fff; border:1.5px solid var(--mm-green);
+      box-shadow:0 14px 36px rgba(25,168,107,.16); cursor:pointer; outline:none; animation:mmSpotIn .7s ease both; }
+    .mm-spot:focus-visible { box-shadow:0 0 0 4px rgba(25,168,107,.35); }
+    .mm-spot.is-leaving { animation:mmSpotOut .7s ease both; pointer-events:none; }
+    .mm-spot.is-tall { grid-template-columns:minmax(0,1fr) minmax(0,1.05fr); }
+    .mm-spot.is-wide { grid-template-rows:minmax(0,1fr) auto; }
+    @keyframes mmSpotIn { from { opacity:0; } to { opacity:1; } }
+    @keyframes mmSpotOut { from { opacity:1; } to { opacity:0; } }
+    .mm-spot-photo { position:relative; overflow:hidden; background:#222; min-height:0; }
+    .mm-spot-track { display:flex; height:100%; transition:transform .7s cubic-bezier(.65,0,.35,1); }
+    .mm-spot-slide { position:relative; flex:0 0 100%; overflow:hidden; }
+    .mm-spot-blur { position:absolute; inset:-30px; width:calc(100% + 60px); height:calc(100% + 60px); object-fit:cover; filter:blur(24px) brightness(.8); }
+    .mm-spot-img { position:relative; display:block; width:100%; height:100%; object-fit:contain; animation:mmKen 10s linear both; }
+    @keyframes mmKen { from { transform:scale(1.06); } 12% { transform:scale(1); } to { transform:scale(1.04); } }
+    .mm-spot-empty { height:100%; display:flex; flex-direction:column; align-items:center; justify-content:center; gap:8px; color:#fff; font-size:14px;
+      background:linear-gradient(135deg,#2c2c2a,#4a4a46); }
+    .mm-spot-empty.is-text { background:linear-gradient(135deg,var(--mm-green-soft),#fff); color:var(--mm-green-dark); }
+    .mm-spot-empty.is-text span { font-size:40px; letter-spacing:.1em; }
+    .mm-spot-place { position:absolute; left:16px; top:16px; display:inline-flex; align-items:center; gap:7px; height:32px; padding:0 14px;
+      border-radius:999px; background:rgba(255,255,255,.94); font-size:14px; font-weight:800; color:var(--mm-ink); animation:mmUp .5s ease .4s both; }
+    .mm-spot-place i { width:8px; height:8px; border-radius:50%; }
+    .mm-spot-dots { position:absolute; left:0; right:0; bottom:14px; display:flex; justify-content:center; gap:7px; }
+    .mm-spot-dots i { width:8px; height:8px; border-radius:99px; background:rgba(255,255,255,.55); transition:width .3s, background .3s; }
+    .mm-spot-dots i.is-on { width:22px; background:#fff; }
+    .mm-spot-body { display:flex; flex-direction:column; min-width:0; min-height:0; padding:26px 28px 22px; }
+    .mm-spot.is-wide .mm-spot-body { padding:20px 28px 18px; }
+    .mm-spot-body > * { animation:mmUp .6s cubic-bezier(.2,.7,.2,1) both; }
+    .mm-spot-body > :nth-child(1) { animation-delay:.25s; } .mm-spot-body > :nth-child(2) { animation-delay:.35s; }
+    .mm-spot-body > :nth-child(3) { animation-delay:.45s; } .mm-spot-body > :nth-child(4) { animation-delay:.55s; }
+    .mm-spot-body > :nth-child(5) { animation-delay:.65s; }
+    @keyframes mmUp { from { opacity:0; transform:translateY(14px); } to { opacity:1; transform:none; } }
+    .mm-spot-top { display:flex; align-items:center; justify-content:space-between; gap:12px; }
+    .mm-spot-tags { display:flex; flex-wrap:wrap; gap:8px; min-width:0; }
+    .mm-spot-tag { display:inline-flex; align-items:center; height:36px; padding:0 16px; border-radius:999px; font-size:16px; font-weight:800; white-space:nowrap; }
+    .mm-spot-title { margin:14px 0 10px; font-size:clamp(24px,2.2vw,34px); line-height:1.35; letter-spacing:.04em; overflow-wrap:anywhere;
+      display:-webkit-box; -webkit-line-clamp:2; -webkit-box-orient:vertical; overflow:hidden; }
+    .mm-spot.is-wide .mm-spot-title { margin:12px 0 6px; font-size:clamp(22px,2vw,30px); -webkit-line-clamp:1; }
+    .mm-spot-text { margin:0; font-size:clamp(15px,1.25vw,19px); line-height:1.9; color:var(--mm-ink); white-space:pre-line; overflow-wrap:anywhere;
+      display:-webkit-box; -webkit-line-clamp:9; -webkit-box-orient:vertical; overflow:hidden; }
+    .mm-spot.is-wide .mm-spot-text { line-height:1.8; -webkit-line-clamp:3; }
+    .mm-spot-by { display:flex; align-items:baseline; gap:6px; font-size:24px; font-weight:800; white-space:nowrap; color:var(--mm-ink); }
+    .mm-spot-by small { font-size:16px; font-weight:700; color:var(--mm-ink3); }
+    .mm-spot.is-tall .mm-spot-by { margin-top:auto; padding-top:16px; }
+    .mm-spot-prog { display:flex; align-items:center; gap:12px; margin-top:16px; font-size:13px; font-weight:700; color:var(--mm-ink3); }
+    .mm-spot.is-wide .mm-spot-prog { margin-top:14px; }
+    .mm-spot-bar { flex:1; height:4px; border-radius:4px; background:var(--mm-line); overflow:hidden; }
+    .mm-spot-bar i { display:block; height:100%; background:var(--mm-green); transition:width .1s linear; }
+    @media (prefers-reduced-motion: reduce) {
+      .mm-spot, .mm-spot-body > *, .mm-spot-place, .mm-spot-img { animation:none !important; }
+      .mm-spot-track { transition:none; }
+    }
+    @media (max-width:1280px) { .mm-mon-tagline { display:none; } }
     @media (max-width:600px) {
       .mm-topbar { padding-left:12px; padding-right:12px; gap:6px; }
       .mm-logo { gap:6px; }
