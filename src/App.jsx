@@ -1191,6 +1191,14 @@ function OptionalFields({ photo, setPhoto, ageGroup, setAgeGroup, gender, setGen
 // =====================================
 // 投稿フォーム（マップ内の➕から）
 // =====================================
+// 投稿フォームの見出し（番号・必須/任意・補足）
+function FormStep({ n, children, req, note }) {
+  return (
+    <div className="mm-form-label"><span className="mm-form-num">{n}</span>{children}
+      {req ? <b className="mm-form-req">必須</b> : <span className="mm-form-opt">任意</span>}{note && <em>{note}</em>}</div>
+  );
+}
+
 function PostForm({ onSubmit, onCancel, hideBack = false, stores, tags: availableTags }) {
   const [penname, setPenname] = useState('');
   const [prefecture, setPrefecture] = useState('');
@@ -1364,78 +1372,106 @@ function PostForm({ onSubmit, onCancel, hideBack = false, stores, tags: availabl
 
   if (success) {
     return (
-      <div style={s.formScreen}>
-        <div style={s.formBox}>
-          <div style={{ textAlign: 'center', marginTop: 80 }}>
-            <div style={{ fontSize: '4rem' }}>🎉</div>
-            <div style={{ fontFamily: FONT_DISPLAY, fontSize: '1.5rem', fontWeight: 700, color: C.ink, margin: '20px 0 8px', letterSpacing: 3 }}>貼り出しました！</div>
-            <div style={{ fontFamily: FONT_HAND, fontSize: '0.875rem', color: C.inkSub }}>
-              <strong>{success.store ? success.store.name : success.pref.name}</strong>に表示されます
-            </div>
-          </div>
+      <div className="mm-form">
+        <div className="mm-form-done" role="status">
+          <svg className="mm-done-check" viewBox="0 0 52 52" aria-hidden="true"><circle cx="26" cy="26" r="24"/><path d="M15 27l7 7 15-16"/></svg>
+          <h2 className="mm-heading-mincho">投稿しました！</h2>
+          <p><strong>{success.store ? success.store.name : success.pref.name}</strong>のおすすめとして表示されます</p>
         </div>
       </div>
     );
   }
 
   const canSubmit = penname.trim() && prefecture && message.trim() && tags.length > 0 && (prefecture !== 'overseas' || country.trim()) && !submitting;
+  // まだ入っていない必須項目（ボタンの上に出す）
+  const missing = [
+    !message.trim() && 'おすすめの場所',
+    !prefecture && 'どこ？',
+    prefecture === 'overseas' && !country.trim() && '国・地域',
+    tags.length === 0 && 'ジャンル',
+    !penname.trim() && 'ペンネーム',
+  ].filter(Boolean);
+  // 入力中の内容で「こんなふうに表示されます」の見本を作る
+  const previewPost = (message.trim() || photos.length > 0) && {
+    id: 'preview', penname: penname.trim() || 'あなた', message: message.trim() || '（おすすめの場所を書くとここに出ます）',
+    prefectureName: prefecture === 'overseas' ? (country.trim() ? `🌍 ${country.trim()}` : '海外') : (PREFS[prefecture]?.name || ''),
+    region: storeId && stores[storeId] ? stores[storeId].name : (PREFS[prefecture]?.region || ''),
+    country: prefecture === 'overseas' ? country.trim() : null,
+    tokyoWard: prefecture === 'tokyo' ? tokyoWard : null, arakawaSubRegion, aichiSubRegion,
+    tags, photo: photos[0] || null, photos: photos.length ? photos : null, url: url.trim() || null, ageGroup, gender,
+  };
+  const tagMapForPreview = Object.fromEntries((availableTags || []).map(t => [t.key, t]));
 
   return (
-    <div style={s.formScreen}>
-      <div style={s.formBox}>
-        {onCancel && !hideBack && <button onClick={onCancel} style={s.backBtn}>← 戻る</button>}
+    <div className="mm-form">
+      {onCancel && !hideBack && <button type="button" onClick={onCancel} className="mm-btn mm-form-back"><Icon name="back"/><span>戻る</span></button>}
 
-        <div style={{ textAlign: 'center', marginBottom: 28 }}>
-          <h1 className="mm-heading-mincho" style={s.formTitle}><Phrases text="みんなのおすすめマップ"/></h1>
-          <p style={s.formSub}>地元、おすすめのお店、行ってよかった場所…</p>
-          <AccentLine style={{ width: 80, margin: '16px auto 0' }} />
+      <section className="mm-form-intro">
+        <p className="mm-intro-eyebrow">POST</p>
+        <h1 className="mm-heading-mincho mm-reveal"><Phrases text="あなたの「好き」を、教えてください。" from={0}/></h1>
+        <p>写真とひとことで、街のおすすめを投稿できます</p>
+      </section>
+
+      <div className="mm-form-body">
+        {/* 1 写真 */}
+        <div className="mm-form-field">
+          <FormStep n={1} note="何枚でもOK">写真</FormStep>
+          <input ref={photoInputRef} type="file" accept="image/*,.heic,.heif" multiple onChange={handlePhotoChange} style={{ display: 'none' }}/>
+          <div className="mm-form-photos">
+            {photos.map((ph, i) => (
+              <div key={i} className="mm-form-thumb">
+                <img src={ph} alt={`写真${i + 1}`}/>
+                {i === 0 && <span className="mm-form-first">表紙</span>}
+                <button type="button" onClick={() => setPhotos(photos.filter((_, idx) => idx !== i))} aria-label={`写真${i + 1}を外す`}><Icon name="x" size={14}/></button>
+              </div>
+            ))}
+            <button type="button" className="mm-form-add" onClick={() => photoInputRef.current?.click()}>
+              <Icon name="camera" size={28}/><span>{photos.length === 0 ? '写真を選ぶ' : '追加'}</span>
+            </button>
+          </div>
+          <p className="mm-form-help">1枚目が表紙になります。自動で軽くしてから送ります</p>
         </div>
 
-        <div style={s.field}>
-          <label style={s.label}>
-            <span style={{ ...s.labelDot, background: C.green }} />ペンネーム
-          </label>
-          <input type="text" value={penname} onChange={(e) => setPenname(e.target.value)} placeholder="例：るいさん" maxLength={20} style={s.input}/>
+        {/* 2 おすすめの場所 */}
+        <div className="mm-form-field">
+          <FormStep n={2} req>おすすめの場所</FormStep>
+          <textarea className="mm-form-input mm-form-textarea" value={message} onChange={(e) => setMessage(e.target.value)} maxLength={140} rows={5}
+            placeholder={'例：山本屋本店\n名古屋の味噌煮込みうどんが最高！'}/>
+          <div className="mm-form-help mm-form-row"><span>1行目が見出しになります（お店や場所の名前がおすすめ）</span><span>{message.length} / 140</span></div>
         </div>
 
-        <div style={s.field}>
-          <label style={s.label}>
-            <span style={{ ...s.labelDot, background: C.yellow }} />地域
-            <span style={s.required}>必須</span>
-          </label>
-          <select value={prefecture} onChange={(e) => setPrefecture(e.target.value)} style={s.select}>
-            <option value="">— 選択してください —</option>
+        {/* 3 どこ？ */}
+        <div className="mm-form-field">
+          <FormStep n={3} req>どこ？</FormStep>
+          <select className="mm-form-input" value={prefecture} onChange={(e) => setPrefecture(e.target.value)}>
+            <option value="">都道府県を選ぶ</option>
             {REGION_GROUPS.map(region => (
               <optgroup key={region} label={`${region}地方`}>
-                {grouped[region].map(p => (
-                  <option key={p.key} value={p.key}>{p.name}</option>
-                ))}
+                {grouped[region].map(p => <option key={p.key} value={p.key}>{p.name}</option>)}
               </optgroup>
             ))}
-            <optgroup label="その他">
-              <option value="overseas">🌍 海外</option>
-            </optgroup>
+            <optgroup label="その他"><option value="overseas">🌍 海外</option></optgroup>
           </select>
         </div>
 
         {/* 海外を選んだ時の国名選択 */}
         {prefecture === 'overseas' && (
-          <div style={s.field}>
-            <label style={s.label}>
-              <span style={{ ...s.labelDot, background: C.green }} />国・地域
-              <span style={s.required}>必須</span>
+          <div className="mm-form-field mm-form-sub">
+            <label className="mm-form-label is-sub">
+              国・地域
+              <b className="mm-form-req">必須</b>
             </label>
-            <div style={s.hint}>国名の最初の文字を入力すると候補が出ます</div>
+            <div className="mm-form-help">国名の最初の文字を入力すると候補が出ます</div>
             <CountryPicker value={country} onChange={setCountry}/>
           </div>
         )}
 
         {/* イベント地域モード：愛知サブ地域選択 */}
         {prefecture === 'aichi' && (
-          <div style={s.field}>
-            <label style={s.label}>
-              <span style={{ ...s.labelDot, background: '#e84c3d' }} />愛知の地域
-              <span style={s.optional}>任意</span>
+          <div className="mm-form-field mm-form-sub">
+            <label className="mm-form-label is-sub">
+              愛知の地域
+              <span className="mm-form-opt">任意</span>
             </label>
             <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap' }}>
               {AICHI_SUBREGIONS.map(sr => (
@@ -1457,10 +1493,10 @@ function PostForm({ onSubmit, onCancel, hideBack = false, stores, tags: availabl
 
         {/* 東京：23区選択（プルダウン） */}
         {prefecture === 'tokyo' && (
-          <div style={s.field}>
-            <label style={s.label}>
-              <span style={{ ...s.labelDot, background: C.pink }} />区
-              <span style={s.optional}>任意</span>
+          <div className="mm-form-field mm-form-sub">
+            <label className="mm-form-label is-sub">
+              区
+              <span className="mm-form-opt">任意</span>
             </label>
             <select
               value={tokyoWard}
@@ -1470,7 +1506,7 @@ function PostForm({ onSubmit, onCancel, hideBack = false, stores, tags: availabl
                 setStoreId(next === '荒川区' ? 'arakawa' : '');
                 if (next !== '荒川区') setArakawaSubRegion('');
               }}
-              style={{ ...s.input, fontFamily: FONT_HAND }}
+              className="mm-form-input"
             >
               <option value=''>選択しない</option>
               {TOKYO_WARDS.map(ward => (
@@ -1482,10 +1518,10 @@ function PostForm({ onSubmit, onCancel, hideBack = false, stores, tags: availabl
 
         {/* 東京以外の店舗選択 */}
         {prefecture !== 'tokyo' && availableStores.length > 0 && (
-          <div style={s.field}>
-            <label style={s.label}>
-              <span style={{ ...s.labelDot, background: C.pink }} />街中スナック店舗
-              <span style={s.optional}>任意</span>
+          <div className="mm-form-field mm-form-sub">
+            <label className="mm-form-label is-sub">
+              街中スナック店舗
+              <span className="mm-form-opt">任意</span>
             </label>
             <div style={s.storeBtns}>
               <button type="button" onClick={() => setStoreId('')} style={{ ...s.storeBtn, ...(storeId === '' ? s.storeBtnActive : {}) }}>
@@ -1504,10 +1540,10 @@ function PostForm({ onSubmit, onCancel, hideBack = false, stores, tags: availabl
 
         {/* 荒川区サブ地域選択 */}
         {storeId === 'arakawa' && (
-          <div style={s.field}>
-            <label style={s.label}>
-              <span style={{ ...s.labelDot, background: C.pink }} />荒川区の地域
-              <span style={s.optional}>任意</span>
+          <div className="mm-form-field mm-form-sub">
+            <label className="mm-form-label is-sub">
+              荒川区の地域
+              <span className="mm-form-opt">任意</span>
             </label>
             <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap' }}>
               {ARAKAWA_SUBREGIONS.map(sr => (
@@ -1529,146 +1565,61 @@ function PostForm({ onSubmit, onCancel, hideBack = false, stores, tags: availabl
           </div>
         )}
 
-        <div style={s.field}>
-          <label style={s.label}>
-            <span style={{ ...s.labelDot, background: C.pink }} />おすすめの場所
-          </label>
-          <div style={s.hint}>具体的な地名やお店、思い出を教えてください</div>
-          <textarea value={message} onChange={(e) => setMessage(e.target.value)} placeholder="例：名古屋の味噌煮込みうどんが最高！山本屋本店がおすすめ" maxLength={140} rows={5} style={s.textarea}/>
-          <div style={s.charCount}>{message.length} / 140</div>
-        </div>
-
-        {/* === タグ選択（必須） === */}
-        <div style={s.field}>
-          <label style={s.label}>
-            <span style={{ ...s.labelDot, background: C.green }} />タグ
-            <span style={s.required}>必須・複数可</span>
-          </label>
-          <div style={s.hint}>投稿の内容に合うものを選んでください</div>
-          <div style={s.tagPickGrid}>
+        {/* 4 ジャンル */}
+        <div className="mm-form-field">
+          <FormStep n={4} req note="いくつでも">ジャンル</FormStep>
+          <div className="mm-form-tags">
             {(availableTags || []).map(t => {
               const on = tags.includes(t.key);
               return (
-                <button
-                  key={t.key}
-                  type="button"
-                  onClick={() => setTags(prev => on ? prev.filter(x => x !== t.key) : [...prev, t.key])}
-                  style={{
-                    ...s.tagPickBtn,
-                    ...(on ? { background: t.color, color: '#fff', borderColor: t.color } : {})
-                  }}
-                >
-                  {t.emoji} {t.label}
+                <button key={t.key} type="button" className={`mm-form-tag${on ? ' is-on' : ''}`} style={{ '--c': t.color }} aria-pressed={on}
+                  onClick={() => setTags(prev => on ? prev.filter(x => x !== t.key) : [...prev, t.key])}>
+                  {on && <Icon name="check" size={14}/>}#{t.label}
                 </button>
               );
             })}
           </div>
         </div>
 
-        {/* === 任意項目セクション === */}
-        <div style={s.optionalSection}>
-          <div style={s.optionalSectionHeader}>
-            <span style={s.optionalSectionIcon}>＋</span>
-            <span>もっと詳しく（任意）</span>
-          </div>
-
-          {/* 写真添付（複数枚OK） */}
-          <div style={s.field}>
-            <label style={s.label}>
-              <span style={{ ...s.labelDot, background: C.green }} />写真
-              <span style={s.optional}>任意・複数可</span>
-            </label>
-            {photos.length > 0 && (
-              <div style={s.photoGrid}>
-                {photos.map((p, i) => (
-                  <div key={i} style={s.photoThumb}>
-                    <img src={p} alt={`プレビュー${i+1}`} style={s.photoThumbImg}/>
-                    <button type="button" onClick={() => setPhotos(photos.filter((_, idx) => idx !== i))} style={s.photoThumbRemove}>✕</button>
-                    <span style={s.photoThumbIdx}>{i + 1}</span>
-                  </div>
-                ))}
-              </div>
-            )}
-            <input
-              ref={photoInputRef}
-              type="file"
-              accept="image/*,.heic,.heif"
-              multiple
-              onChange={handlePhotoChange}
-              style={{ display: 'none' }}
-            />
-            <button
-              type="button"
-              onClick={() => photoInputRef.current?.click()}
-              style={s.photoUploadBox}
-            >
-              <div style={{ fontSize: '1.75rem', marginBottom: 6 }}>📷</div>
-              <div style={{ fontFamily: FONT_HAND, fontSize: '0.875rem', fontWeight: 600, color: C.ink }}>
-                {photos.length === 0 ? 'タップして写真を選ぶ' : `さらに写真を追加（現在${photos.length}枚）`}
-              </div>
-              <div style={{ fontFamily: FONT_HAND, fontSize: '0.6875rem', color: C.inkSub, marginTop: 4 }}>
-                複数選択OK・自動で圧縮されます
-              </div>
-            </button>
-          </div>
-
-          {/* 年齢層 + 性別 横並び */}
-          <div style={s.demographicsRow}>
-            <div style={{ flex: 1 }}>
-              <label style={s.label}>
-                <span style={{ ...s.labelDot, background: C.yellow }} />年齢層
-                <span style={s.optional}>任意</span>
-              </label>
-              <select value={ageGroup} onChange={(e) => setAgeGroup(e.target.value)} style={s.select}>
-                <option value="">— 選択 —</option>
-                <option value="10代">10代</option>
-                <option value="20代">20代</option>
-                <option value="30代">30代</option>
-                <option value="40代">40代</option>
-                <option value="50代">50代</option>
-                <option value="60代">60代</option>
-                <option value="70代以上">70代以上</option>
-              </select>
-            </div>
-
-            <div style={{ flex: 1 }}>
-              <label style={s.label}>
-                <span style={{ ...s.labelDot, background: C.pink }} />性別
-                <span style={s.optional}>任意</span>
-              </label>
-              <select value={gender} onChange={(e) => setGender(e.target.value)} style={s.select}>
-                <option value="">— 選択 —</option>
-                <option value="女性">女性</option>
-                <option value="男性">男性</option>
-                <option value="その他">その他</option>
-                <option value="答えない">答えない</option>
-              </select>
-            </div>
-          </div>
-
-          {/* URLリンク */}
-          <div style={s.field}>
-            <label style={s.label}>
-              <span style={{ ...s.labelDot, background: C.green }} />おすすめ場所のリンク
-              <span style={s.optional}>任意</span>
-            </label>
-            <div style={s.hint}>食べログ・Googleマップ・ホームページなど</div>
-            <input
-              type="text"
-              inputMode="url"
-              value={url}
-              onChange={e => setUrl(e.target.value)}
-              placeholder="https://"
-              autoComplete="off"
-              style={{ ...s.input, fontSize: '0.875rem' }}
-            />
-          </div>
-
-          {/* （タグ選択は必須項目として上部に移動） */}
+        {/* 5 ペンネーム */}
+        <div className="mm-form-field">
+          <FormStep n={5} req>ペンネーム</FormStep>
+          <input type="text" className="mm-form-input" value={penname} onChange={(e) => setPenname(e.target.value)} placeholder="例：るいさん" maxLength={20}/>
         </div>
 
-        <button type="button" onClick={handleSubmit} disabled={!canSubmit} className="mm-btn primary mm-btn-lg" style={{ width: '100%' }}>
-          <span>{submitting ? '貼っています…' : '日本地図に貼る'}</span>
+        {/* 6 年齢層・性別 */}
+        <div className="mm-form-field">
+          <FormStep n={6}>年齢層・性別</FormStep>
+          <div className="mm-form-two">
+            <select className="mm-form-input" value={ageGroup} onChange={(e) => setAgeGroup(e.target.value)} aria-label="年齢層">
+              <option value="">年齢層</option>
+              {['10代', '20代', '30代', '40代', '50代', '60代', '70代以上'].map(v => <option key={v} value={v}>{v}</option>)}
+            </select>
+            <select className="mm-form-input" value={gender} onChange={(e) => setGender(e.target.value)} aria-label="性別">
+              <option value="">性別</option>
+              {['女性', '男性', 'その他', '答えない'].map(v => <option key={v} value={v}>{v}</option>)}
+            </select>
+          </div>
+        </div>
+
+        {/* 7 リンク */}
+        <div className="mm-form-field">
+          <FormStep n={7} note="食べログ・Googleマップ・ホームページなど">おすすめ場所のリンク</FormStep>
+          <input type="text" inputMode="url" className="mm-form-input" value={url} onChange={e => setUrl(e.target.value)} placeholder="https://" autoComplete="off"/>
+        </div>
+
+        {previewPost && (
+          <div className="mm-form-preview">
+            <p className="mm-form-preview-label">こんなふうに表示されます</p>
+            <PostCard post={previewPost} tagMap={tagMapForPreview} preview/>
+          </div>
+        )}
+      </div>
+
+      <div className="mm-form-submit">
+        {missing.length > 0 && !submitting && <p>あと：{missing.join('・')}</p>}
+        <button type="button" onClick={handleSubmit} disabled={!canSubmit} className="mm-btn primary mm-btn-lg">
+          <span>{submitting ? '投稿しています…' : '投稿する'}</span>
           {!submitting && <Icon name="arrow"/>}
         </button>
       </div>
@@ -3476,16 +3427,38 @@ function PhotoGallery({ photos, onSlideChange }) {
   );
 }
 
-function PostDetailModal({ post, updatePost, tagMap, onClose, requestPhotos }) {
+// いいね：同じペンネームからは1回だけ。押し済みならもう一度押すと取り消し（一覧のカードと詳細で共通）
+const myUserId = () => {
+  let id = localStorage.getItem('mn_userid');
+  if (!id) { id = `u_${Math.random().toString(36).slice(2, 10)}`; localStorage.setItem('mn_userid', id); }
+  return id;
+};
+const likedBy = (post, name) => !!name && (post.likes || []).some(l => (l?.name || '').trim() === name);
+function toggleLike(updatePost, postId, name) {
+  try { localStorage.setItem('mn_penname', name); } catch {}
+  const myId = myUserId();
+  updatePost(postId, (cur) => {
+    const list = cur.likes || [];
+    const hit = list.some(l => (l?.name || '').trim() === name);
+    return { ...cur, likes: hit ? list.filter(l => (l?.name || '').trim() !== name) : [...list, { id: myId, name }] };
+  });
+}
+
+// focus="comments" で開くとコメント欄まで送ってから入力欄にカーソルを置く／"like" はいいねの名前欄
+function PostDetailModal({ post, updatePost, tagMap, onClose, requestPhotos, focus }) {
   useEffect(() => { requestPhotos?.([post.id], true); }, [post.id]);
+  const commentsRef = useRef(null);
+  const likeNameRef = useRef(null);
+  useEffect(() => {
+    const t = setTimeout(() => {
+      if (focus === 'comments') { commentsRef.current?.scrollIntoView({ behavior: 'smooth', block: 'start' }); commentsRef.current?.querySelector('input[placeholder="コメントを書く…"]')?.focus({ preventScroll: true }); }
+      if (focus === 'like') { likeNameRef.current?.scrollIntoView({ behavior: 'smooth', block: 'center' }); likeNameRef.current?.focus({ preventScroll: true }); }
+    }, 350);
+    return () => clearTimeout(t);
+  }, []);
   const [commentName, setCommentName] = useState('');
   const [commentText, setCommentText] = useState('');
   const [likeName, setLikeName] = useState('');
-  const [myId] = useState(() => {
-    let id = localStorage.getItem('mn_userid');
-    if (!id) { id = `u_${Math.random().toString(36).slice(2, 10)}`; localStorage.setItem('mn_userid', id); }
-    return id;
-  });
 
   useEffect(() => {
     const saved = localStorage.getItem('mn_penname');
@@ -3498,23 +3471,11 @@ function PostDetailModal({ post, updatePost, tagMap, onClose, requestPhotos }) {
   const trimmedLikeName = likeName.trim().slice(0, 20);
 
   // 同じペンネームからは1回だけ。共用タブレットで別の人が自分の名前で押せる作りは維持する。
-  const sameName = (l) => (l?.name || '').trim() === trimmedLikeName;
-  const alreadyLiked = !!trimmedLikeName && likes.some(sameName);
+  const alreadyLiked = likedBy(post, trimmedLikeName);
 
   const handleLike = () => {
     if (!trimmedLikeName) return;
-    try { localStorage.setItem('mn_penname', trimmedLikeName); } catch {}
-    updatePost(post.id, (cur) => {
-      const list = cur.likes || [];
-      const hit = list.some(l => (l?.name || '').trim() === trimmedLikeName);
-      return {
-        ...cur,
-        // 押し済みならもう一度押すと取り消し
-        likes: hit
-          ? list.filter(l => (l?.name || '').trim() !== trimmedLikeName)
-          : [...list, { id: myId, name: trimmedLikeName }],
-      };
-    });
+    toggleLike(updatePost, post.id, trimmedLikeName);
   };
 
   const addComment = () => {
@@ -3612,6 +3573,7 @@ function PostDetailModal({ post, updatePost, tagMap, onClose, requestPhotos }) {
         {/* いいね */}
         <div style={{ display: 'flex', gap: 8 }}>
           <input
+            ref={likeNameRef}
             value={likeName}
             onChange={e => setLikeName(e.target.value)}
             placeholder="ペンネーム"
@@ -3631,7 +3593,7 @@ function PostDetailModal({ post, updatePost, tagMap, onClose, requestPhotos }) {
         </div>
 
         {/* コメント */}
-        <div style={{ marginTop: 20, paddingTop: 16, borderTop: `1px dashed ${C.line}` }}>
+        <div ref={commentsRef} style={{ marginTop: 20, paddingTop: 16, borderTop: `1px dashed ${C.line}`, scrollMarginTop: 12 }}>
           <div style={{ fontFamily: FONT_DISPLAY, fontSize: '0.875rem', fontWeight: 700, letterSpacing: 2, marginBottom: 12 }}>
             💬 コメント {comments.length}
           </div>
@@ -4111,6 +4073,10 @@ const ICON_PATHS = {
   board: 'M5 4h14v16H5zM9 9h6M9 13h6M9 17h3',
   qr: 'M4 4h6v6H4zM14 4h6v6h-6zM4 14h6v6H4zM14 14h2v2h-2zM18 18h2v2h-2zM14 18h2M18 14h2',
   arrow: 'M5 12h14M13 6l6 6-6 6',
+  heart: 'M12 20s-7.5-4.6-7.5-10.2A4.3 4.3 0 0 1 12 7a4.3 4.3 0 0 1 7.5 2.8C19.5 15.4 12 20 12 20z',
+  chat: 'M4 5h16v11H10l-5 4v-4H4z',
+  link: 'M10 14a4 4 0 0 0 5.7 0l3-3a4 4 0 0 0-5.7-5.7l-1 1M14 10a4 4 0 0 0-5.7 0l-3 3a4 4 0 0 0 5.7 5.7l1-1',
+  camera: 'M4 8h3l2-3h6l2 3h3v11H4zM12 16.5a3.5 3.5 0 1 0 0-7 3.5 3.5 0 0 0 0 7z',
 };
 function Icon({ name, size = 18 }) {
   return (
@@ -4123,8 +4089,11 @@ function Icon({ name, size = 18 }) {
 
 // 日本語を文節で区切って、文節の途中で改行しないようにする（BudouX）
 const jaParser = loadDefaultJapaneseParser();
-function Phrases({ text }) {
-  return jaParser.parse(text).map((w, i) => <span key={i} className="mm-phrase">{w}</span>);
+// from を渡すと、文節ごとに少しずつ遅れて出てくるアニメーション用の番号（--i）を付ける
+function Phrases({ text, from }) {
+  return jaParser.parse(text).map((w, i) => (
+    <span key={i} className="mm-phrase" style={from === undefined ? undefined : { '--i': from + i }}>{w}</span>
+  ));
 }
 
 // スマホ・タブレットは「投稿一覧＋検索」の画面にする（地図はマウスで使うPCだけ）
@@ -4213,6 +4182,17 @@ function measureOrient(id, src, done) {
   img.src = src;
 }
 
+// 投稿に付いたリンク。「リンクあり」と一目で分かるよう、行き先のサイト名つきのボタンにする
+const linkHref = (u) => /^https?:\/\//i.test(u) ? u : `https://${u}`;
+const linkHost = (u) => { try { return new URL(linkHref(u)).hostname.replace(/^www\./, ''); } catch { return u; } };
+function PostLink({ url }) {
+  return (
+    <a className="mm-postlink" href={linkHref(url)} target="_blank" rel="noopener noreferrer" onClick={(e) => e.stopPropagation()}>
+      <Icon name="link" size={16}/><span>詳しいページを見る</span><small>{linkHost(url)}</small>
+    </a>
+  );
+}
+
 function SpotCard({ post, tagMap, slide, progress, index, total, leaving, onOpen }) {
   const photos = postPhotos(post);
   const loading = post.photo === undefined;
@@ -4255,6 +4235,7 @@ function SpotCard({ post, tagMap, slide, progress, index, total, leaving, onOpen
         </div>
         {title && <h3 className="mm-spot-title mm-heading-mincho"><Phrases text={title}/></h3>}
         {body && <p className="mm-spot-text">{body}</p>}
+        {post.url && <PostLink url={post.url}/>}
         {layout === 'tall' && by}
         <div className="mm-spot-prog">
           <span className="mm-spot-bar"><i style={{ width: `${Math.min(100, progress * 100)}%` }}/></span>
@@ -4265,10 +4246,101 @@ function SpotCard({ post, tagMap, slide, progress, index, total, leaving, onOpen
   );
 }
 
+// =====================================
+// スマホ・タブレットの一覧カード（PC のスポットライトと同じ見た目を小さくしたもの）
+// いいね・コメントはカードから直接押せるようにする
+// =====================================
+function PostCard({ post, tagMap, onOpen, onLike, onComment, myName, justLiked = false, observe, preview = false }) {
+  const photos = postPhotos(post);
+  const loading = !preview && post.photo === undefined;
+  const { title, body } = splitPostText(post);
+  const likes = (post.likes || []).length;
+  const comments = post.comments || [];
+  const last = comments[comments.length - 1];
+  const liked = likedBy(post, myName);
+  const place = <span className="mm-card-place"><i style={{ background: areaColor(post.region) }}/>{spotPlace(post) || '場所'}</span>;
+  return (
+    <article ref={observe} data-pid={post.id} className={`mm-card${preview ? ' is-preview' : ''}`}
+      role={preview ? undefined : 'button'} tabIndex={preview ? undefined : 0}
+      onClick={preview ? undefined : () => onOpen(post)}
+      onKeyDown={preview ? undefined : (e) => { if (e.key === 'Enter') onOpen(post); }}>
+      {loading ? (
+        <div className="mm-card-photo is-loading"><Icon name="image"/><span>写真を読み込み中…</span>{place}</div>
+      ) : photos.length > 0 ? (
+        <div className="mm-card-photo">
+          <img src={photos[0]} alt="" loading="lazy" decoding="async"/>
+          {place}
+          {photos.length > 1 && <span className="mm-card-count"><Icon name="camera" size={14}/>{photos.length}</span>}
+        </div>
+      ) : null}
+      <div className="mm-card-body">
+        {photos.length === 0 && !loading && <div className="mm-card-placerow">{place}</div>}
+        {(post.tags || []).length > 0 && (
+          <div className="mm-card-tags">
+            {post.tags.map(k => tagMap[k] && (
+              <span key={k} className="mm-card-tag" style={{ color: tagMap[k].color, background: `${tagMap[k].color}1A` }}>#{tagMap[k].label}</span>
+            ))}
+          </div>
+        )}
+        {title && <h3 className="mm-card-title mm-heading-mincho">{title}</h3>}
+        {body && <p className="mm-card-text">{body}</p>}
+        {post.url && <PostLink url={post.url}/>}
+        {!preview && last && (
+          <p className="mm-card-lastcomment"><Icon name="chat" size={14}/><strong>{last.name}</strong>{last.text}</p>
+        )}
+        <div className="mm-card-foot">
+          <span className="mm-card-by"><small>by</small>{post.penname || '名無し'}
+            {(post.ageGroup || post.gender) && <em>{[post.ageGroup, post.gender].filter(Boolean).join('・')}</em>}
+          </span>
+          {!preview && (
+            <span className="mm-card-actions">
+              <button type="button" className={`mm-act mm-like${liked ? ' is-liked' : ''}${justLiked ? ' is-pop' : ''}`}
+                onClick={(e) => { e.stopPropagation(); onLike(post); }} aria-pressed={liked} aria-label={`いいね ${likes}件`}>
+                <Icon name="heart" size={18}/><span>{likes}</span>
+              </button>
+              <button type="button" className="mm-act" onClick={(e) => { e.stopPropagation(); onComment(post); }} aria-label={`コメント ${comments.length}件`}>
+                <Icon name="chat" size={18}/><span>{comments.length}</span>
+              </button>
+            </span>
+          )}
+        </div>
+      </div>
+    </article>
+  );
+}
+
+function PostCardList({ posts, tagMap, onOpen, onLike, onComment, myName, justLiked, onNeedPhotos }) {
+  // 画面に近づいたカードの写真を取りに行く（先読みのため少し手前から）
+  const ioRef = useRef(null);
+  const needRef = useRef(onNeedPhotos);
+  needRef.current = onNeedPhotos;
+  const observe = useCallback((el) => {
+    if (!el || !needRef.current || typeof IntersectionObserver === 'undefined') return;
+    if (!ioRef.current) {
+      ioRef.current = new IntersectionObserver((entries) => {
+        const ids = entries.filter(e => e.isIntersecting).map(e => e.target.dataset.pid).filter(Boolean);
+        if (ids.length) needRef.current?.(ids);
+      }, { rootMargin: '800px 0px' });
+    }
+    ioRef.current.observe(el);
+  }, []);
+  useEffect(() => () => ioRef.current?.disconnect(), []);
+  return (
+    <div className="mm-cards">
+      {posts.map(p => (
+        <PostCard key={p.id} post={p} tagMap={tagMap} onOpen={onOpen} onLike={onLike} onComment={onComment}
+          myName={myName} justLiked={justLiked === p.id} observe={observe}/>
+      ))}
+    </div>
+  );
+}
+
 function Spotlight({ posts, tagMap, requestPhotos, onOpen, onFocus }) {
   const [idx, setIdx] = useState(0);
   const [elapsed, setElapsed] = useState(0);
   const [hover, setHover] = useState(false);
+  const [offscreen, setOffscreen] = useState(false);   // 画面の外に出ている間は止める
+  const stageRef = useRef(null);
   const [, bump] = useState(0);                  // 写真の縦横が分かったら描き直す
   const [leaving, setLeaving] = useState(null);  // 切り替え時にふわっと消えていく前の投稿 { post, slide }
   const prevRef = useRef(null);
@@ -4288,12 +4360,21 @@ function Spotlight({ posts, tagMap, requestPhotos, onOpen, onFocus }) {
   useEffect(() => { if (cur) measureOrient(cur.id, postPhotos(cur)[0], () => bump(v => v + 1)); }, [cur?.id, cur?.photo]);
   useEffect(() => { if (next) measureOrient(next.id, postPhotos(next)[0]); }, [next?.id, next?.photo]);
 
+  useEffect(() => {
+    const el = stageRef.current;
+    if (!el || typeof IntersectionObserver === 'undefined') return;
+    const io = new IntersectionObserver(([e]) => setOffscreen(!e.isIntersecting), { threshold: 0.2 });
+    io.observe(el);
+    return () => io.disconnect();
+  }, [n > 0]);
+
   // マウスを乗せている間は止める（PCで読んでいる途中に切り替わらないように）
   useEffect(() => {
-    if (n === 0 || hover) return;
-    const t = setInterval(() => setElapsed(e => e + 100), 100);
+    if (n === 0 || hover || offscreen) return;
+    const t = setInterval(() => { if (!document.hidden) setElapsed(e => e + 100); }, 100);
     return () => clearInterval(t);
-  }, [n, hover]);
+  }, [n, hover, offscreen]);
+
   useEffect(() => {
     if (n > 0 && elapsed >= dur) { setIdx(i => (i + 1) % n); setElapsed(0); }
   }, [elapsed, dur, n]);
@@ -4316,7 +4397,7 @@ function Spotlight({ posts, tagMap, requestPhotos, onOpen, onFocus }) {
 
   if (!cur) return null;
   return (
-    <div className="mm-spot-stage" onMouseEnter={() => setHover(true)} onMouseLeave={() => setHover(false)}>
+    <div ref={stageRef} className="mm-spot-stage" onMouseEnter={() => setHover(true)} onMouseLeave={() => setHover(false)}>
       {leaving && leaving.post.id !== cur.id && (
         <SpotCard key={`leave-${leaving.post.id}`} post={leaving.post} tagMap={tagMap} slide={leaving.slide} progress={1}
           index={idx} total={n} leaving onOpen={onOpen}/>
@@ -4480,15 +4561,63 @@ function sortPosts(list, sort) {
 // 調査レポート「スマホ 絞り込み UI 設計」の推奨案：
 //   初期表示は「エリア▼」「ジャンル▼」「並び替え」と件数だけ。県とタグはシートの中へ。
 // =====================================
-function CustomerBrowse({ posts, updatePost, tags, postsLoading = false, postsLoadError = false, requestPhotos, onPost, notice }) {
+// 一覧の絞り込みとスクロール位置は、このタブを閉じるまで覚えておく（再読み込みや別ページから戻っても続きから見られる）
+const BROWSE_KEY = 'mm_browse';
+const loadBrowse = () => { try { return JSON.parse(sessionStorage.getItem(BROWSE_KEY)) || {}; } catch { return {}; } };
+
+// active=false の間（投稿ページを開いている間）は画面に出ていないので、スクロール位置を記録しない
+function CustomerBrowse({ posts, updatePost, tags, postsLoading = false, postsLoadError = false, requestPhotos, onPost, notice, active = true }) {
   const tagMap = useMemo(() => Object.fromEntries((tags || []).map(t => [t.key, t])), [tags]);
-  const [q, setQ] = useState('');
-  const [area, setArea] = useState('');
-  const [sub, setSub] = useState('');
-  const [selTags, setSelTags] = useState([]);   // 複数選択（どれかに当てはまればOK）
-  const [sort, setSort] = useState('new');
+  const [saved] = useState(loadBrowse);
+  const [q, setQ] = useState(saved.q || '');
+  const [area, setArea] = useState(saved.area || '');
+  const [sub, setSub] = useState(saved.sub || '');
+  const [selTags, setSelTags] = useState(saved.selTags || []);   // 複数選択（どれかに当てはまればOK）
+  const [sort, setSort] = useState(saved.sort || 'new');
+  const scrollYRef = useRef(saved.y || 0);
+  // 再読み込みしたときは、投稿が読み込めてから前の位置まで戻す（1回だけ）。
+  // 戻すまでの間に出るスクロール（読み込み途中の短いページ）で記録を上書きしないよう、それまでは記録しない
+  const restored = useRef(!saved.y);
+  useEffect(() => {
+    try { if ('scrollRestoration' in history) history.scrollRestoration = 'manual'; } catch {}
+  }, []);
+  useEffect(() => {
+    try { sessionStorage.setItem(BROWSE_KEY, JSON.stringify({ q, area, sub, selTags, sort, y: scrollYRef.current })); } catch {}
+  }, [q, area, sub, selTags, sort]);
+  useEffect(() => {
+    if (!active) return;
+    let raf = 0;
+    const onScroll = () => {
+      if (raf || !restored.current) return;
+      raf = requestAnimationFrame(() => {
+        raf = 0;
+        scrollYRef.current = window.scrollY;
+        try { sessionStorage.setItem(BROWSE_KEY, JSON.stringify({ ...loadBrowse(), y: window.scrollY })); } catch {}
+      });
+    };
+    window.addEventListener('scroll', onScroll, { passive: true });
+    return () => { window.removeEventListener('scroll', onScroll); if (raf) cancelAnimationFrame(raf); };
+  }, [active]);
+  useEffect(() => {
+    if (restored.current || posts.length === 0) return;
+    requestAnimationFrame(() => { window.scrollTo(0, saved.y); restored.current = true; });
+  }, [posts.length]);
   const [sheet, setSheet] = useState(null);     // 'area' | 'genre' | null
   const [detailPost, setDetailPost] = useState(null);
+  const [detailFocus, setDetailFocus] = useState(null);   // 'comments' | 'like' | null
+  const [myName, setMyName] = useState(() => { try { return (localStorage.getItem('mn_penname') || '').trim().slice(0, 20); } catch { return ''; } });
+  const [justLiked, setJustLiked] = useState(null);       // いいねを押した直後のハートを弾ませる
+  const openPost = (p, focus = null) => { setDetailFocus(focus); setDetailPost(p); };
+  const closePost = () => {
+    setDetailPost(null); setDetailFocus(null);
+    try { setMyName((localStorage.getItem('mn_penname') || '').trim().slice(0, 20)); } catch {}
+  };
+  // カードのハート：ペンネームが分かっていればその場で、まだなら詳細を開いて名前を入れてもらう
+  const likeFromCard = (p) => {
+    if (!myName) { openPost(p, 'like'); return; }
+    if (!likedBy(p, myName)) { setJustLiked(p.id); setTimeout(() => setJustLiked(id => id === p.id ? null : id), 700); }
+    toggleLike(updatePost, p.id, myName);
+  };
 
   const searchIndex = useCallback((p) => postSearchText(p, tagMap), [tagMap]);
 
@@ -4553,10 +4682,13 @@ function CustomerBrowse({ posts, updatePost, tags, postsLoading = false, postsLo
 
       {notice}
 
-      {/* キャッチコピー */}
+      {/* キャッチコピー（見出しは文節ごとにふわっと出す） */}
       <section className="mm-intro" aria-labelledby="mm-intro-title">
         <p className="mm-intro-eyebrow">MACHINAKA MAP</p>
-        <h1 id="mm-intro-title" className="mm-intro-title"><Phrases text="いつもの街に、まだ知らない出会いを。"/></h1>
+        <h1 id="mm-intro-title" className="mm-intro-title mm-reveal"><Phrases text="いつもの街に、" from={0}/><br/><Phrases text="まだ知らない出会いを。" from={3}/></h1>
+      </section>
+
+      <section className="mm-intro mm-intro-more">
         <p className="mm-intro-lead">
           <Phrases text="お気に入りのお店や、地元の人だからこそ知っている街の魅力を見つけられる"/>
           <strong className="mm-phrase">『街中マップ』。</strong>
@@ -4619,20 +4751,17 @@ function CustomerBrowse({ posts, updatePost, tags, postsLoading = false, postsLo
       </div>
 
       <div className="mm-list">
-      <ScrollingList
-        posts={results}
-        regionColor={(p) => areaColor(p.region)}
-        onPostClick={setDetailPost}
-        tagMap={tagMap}
-        staticFlow
-        onNeedPhotos={requestPhotos}
-        loading={postsLoading && posts.length === 0}
-        loadError={postsLoadError && posts.length === 0}
-        emptyText={filtering ? '条件に合う投稿がありませんでした' : 'まだ投稿がありません'}
-      />
+      {results.length > 0 ? (
+        <PostCardList posts={results} tagMap={tagMap} onOpen={(p) => openPost(p)} onLike={likeFromCard}
+          onComment={(p) => openPost(p, 'comments')} myName={myName} justLiked={justLiked} onNeedPhotos={requestPhotos}/>
+      ) : (postsLoading || postsLoadError) && posts.length === 0 ? (
+        <LoadingNote error={postsLoadError && !postsLoading}/>
+      ) : (
+        <div className="mm-empty">{filtering ? '条件に合う投稿がありませんでした' : 'まだ投稿がありません'}</div>
+      )}
 
       {filtering && results.length === 0 && !postsLoading && (
-        <div style={{ textAlign: 'center', marginTop: -20, paddingBottom: 24 }}>
+        <div style={{ textAlign: 'center', paddingBottom: 24 }}>
           <button type="button" className="mm-btn" onClick={clearAll}>条件を解除してすべて表示</button>
         </div>
       )}
@@ -4656,7 +4785,8 @@ function CustomerBrowse({ posts, updatePost, tags, postsLoading = false, postsLo
           updatePost={updatePost}
           tagMap={tagMap}
           requestPhotos={requestPhotos}
-          onClose={() => setDetailPost(null)}
+          focus={detailFocus}
+          onClose={closePost}
         />
       )}
     </>
@@ -4674,7 +4804,16 @@ function CustomerPostPage({ posts, addPost, updatePost, stores, tags, settings, 
     setPostDone(true);
     setFormKey(k => k + 1); // フォームをリセット
   };
-  const goPost = () => { setPostDone(false); setTab('form'); window.scrollTo(0, 0); };
+  // スマホ・タブレット：投稿ページを開いても一覧は消さずに隠しておき、戻ったら同じ位置から続きを見られるようにする
+  const listY = useRef(0);
+  const goPost = () => { listY.current = window.scrollY; setPostDone(false); setTab('form'); window.scrollTo(0, 0); };
+  const prevTab = useRef(tab);
+  useEffect(() => {
+    if (prevTab.current === tab) return;   // 開いた直後は一覧側が前の位置に戻すので触らない
+    prevTab.current = tab;
+    // 投稿した後は新しい投稿とお知らせが見えるよう一番上へ。投稿せずに戻ったときは元の位置へ
+    if (tab === 'map' && browse) requestAnimationFrame(() => window.scrollTo(0, postDone ? 0 : listY.current));
+  }, [tab]);
 
   // 投稿完了のお知らせ（フォームから戻ってきたときに出る）
   const doneNotice = postDone && (
@@ -4685,37 +4824,7 @@ function CustomerPostPage({ posts, addPost, updatePost, stores, tags, settings, 
     </div>
   );
 
-  if (tab === 'map') {
-    if (browse) {
-      return (
-        <div className="mm-page">
-          <CustomerBrowse
-            posts={posts} updatePost={updatePost} tags={tags}
-            postsLoading={postsLoading} postsLoadError={postsLoadError} requestPhotos={requestPhotos}
-            onPost={goPost} notice={doneNotice}
-          />
-        </div>
-      );
-    }
-    // PC：地図（閲覧専用。ピン調整と設定の書き換えはさせない）
-    return (
-      <div className="mn-screen" style={{ display: 'flex', flexDirection: 'column', background: C.bgWhite, fontFamily: FONT_BODY }}>
-        {doneNotice}
-        <div style={{ flex: 1, minHeight: 0 }}>
-          <MapView
-            posts={posts} addPost={addPost} updatePost={updatePost}
-            stores={stores} tags={tags}
-            settings={settings} updateSettings={() => {}}
-            mobile={false} allowPinEdit={false} embedded
-            postsLoading={postsLoading} postsLoadError={postsLoadError} requestPhotos={requestPhotos}
-            onPost={goPost}
-          />
-        </div>
-      </div>
-    );
-  }
-
-  return (
+  const formPage = (
     <div className="mm-page">
       <header className="mm-topbar">
         <span className="mm-logo" aria-label="街中マップ"><span className="mm-logo-box">街中</span><span className="mm-logo-sub">マップ</span></span>
@@ -4735,6 +4844,42 @@ function CustomerPostPage({ posts, addPost, updatePost, stores, tags, settings, 
       />
     </div>
   );
+
+  if (browse) {
+    return (
+      <>
+        <div className="mm-page" hidden={tab !== 'map'}>
+          <CustomerBrowse
+            posts={posts} updatePost={updatePost} tags={tags}
+            postsLoading={postsLoading} postsLoadError={postsLoadError} requestPhotos={requestPhotos}
+            onPost={goPost} notice={doneNotice} active={tab === 'map'}
+          />
+        </div>
+        {tab !== 'map' && formPage}
+      </>
+    );
+  }
+
+  if (tab === 'map') {
+    // PC：地図（閲覧専用。ピン調整と設定の書き換えはさせない）
+    return (
+      <div className="mn-screen" style={{ display: 'flex', flexDirection: 'column', background: C.bgWhite, fontFamily: FONT_BODY }}>
+        {doneNotice}
+        <div style={{ flex: 1, minHeight: 0 }}>
+          <MapView
+            posts={posts} addPost={addPost} updatePost={updatePost}
+            stores={stores} tags={tags}
+            settings={settings} updateSettings={() => {}}
+            mobile={false} allowPinEdit={false} embedded
+            postsLoading={postsLoading} postsLoadError={postsLoadError} requestPhotos={requestPhotos}
+            onPost={goPost}
+          />
+        </div>
+      </div>
+    );
+  }
+
+  return formPage;
 }
 
 // =====================================
@@ -7859,6 +8004,134 @@ if (typeof document !== 'undefined' && !document.getElementById('mn-global-style
     @media (prefers-reduced-motion: reduce) {
       .mm-spot, .mm-spot-body > *, .mm-spot-place, .mm-spot-img { animation:none !important; }
       .mm-spot-track { transition:none; }
+    }
+    /* 投稿のリンク：「リンクあり」が一目で分かるボタン（PC・スマホ共通） */
+    .mm-postlink { display:inline-flex; align-items:center; gap:6px; align-self:flex-start; max-width:100%; margin-top:12px; height:36px; padding:0 14px;
+      box-sizing:border-box; border-radius:999px; background:var(--mm-green-soft); border:1.5px solid var(--mm-green); color:var(--mm-green-dark);
+      font-size:13px; font-weight:800; text-decoration:none; white-space:nowrap; }
+    .mm-postlink small { min-width:0; overflow:hidden; text-overflow:ellipsis; font-size:11px; font-weight:600; color:var(--mm-ink3); }
+    .mm-spot-body > :nth-child(6) { animation-delay:.75s; }
+    /* ===== スマホ・タブレット ===== */
+    /* 見出し：文節ごとに少しずつ、ぼかしから浮かび上がる */
+    .mm-reveal .mm-phrase { animation:mmPhrase .9s cubic-bezier(.2,.7,.2,1) both; animation-delay:calc(var(--i, 0) * 80ms + 120ms); }
+    @keyframes mmPhrase { from { opacity:0; transform:translateY(.4em); filter:blur(6px); } to { opacity:1; transform:none; filter:none; } }
+    .mm-page .mm-intro { padding:34px 24px 18px; border-bottom:none; }
+    .mm-page .mm-intro .mm-intro-title { margin-bottom:0; }
+    .mm-page .mm-intro-more { padding:22px 24px 30px; border-bottom:1px solid var(--mm-line); }
+    /* 一覧カード */
+    .mm-cards { display:flex; flex-direction:column; gap:14px; padding:14px 12px 0; }
+    .mm-card { overflow:hidden; border-radius:18px; background:#fff; border:1px solid var(--mm-line); cursor:pointer; outline:none;
+      transition:scale .15s; -webkit-tap-highlight-color:transparent; }
+    .mm-card:active { scale:.99; }
+    .mm-card:focus-visible { box-shadow:0 0 0 3px rgba(25,168,107,.35); }
+    .mm-card-photo { position:relative; aspect-ratio:4/3; background:#EEEEEA; }
+    .mm-card-photo img { display:block; width:100%; height:100%; object-fit:cover; }
+    .mm-card-photo.is-loading { display:flex; align-items:center; justify-content:center; gap:8px; font-size:13px; color:var(--mm-ink3);
+      background:linear-gradient(90deg,#EEEEEA 30%,#F6F6F2 50%,#EEEEEA 70%); background-size:200% 100%; animation:mnshimmer 1.4s linear infinite; }
+    .mm-card-place { display:inline-flex; align-items:center; gap:6px; height:26px; padding:0 11px; border-radius:999px; background:rgba(255,255,255,.94);
+      font-size:11.5px; font-weight:800; color:var(--mm-ink); white-space:nowrap; }
+    .mm-card-photo .mm-card-place { position:absolute; left:10px; top:10px; }
+    .mm-card-placerow .mm-card-place { background:var(--mm-bg2); border:1px solid var(--mm-line); margin-bottom:8px; }
+    .mm-card-place i { width:7px; height:7px; border-radius:50%; }
+    .mm-card-count { position:absolute; right:10px; bottom:10px; display:inline-flex; align-items:center; gap:4px; height:26px; padding:0 9px;
+      border-radius:999px; background:rgba(26,26,26,.6); color:#fff; font-size:12px; font-weight:800; }
+    .mm-card-body { display:flex; flex-direction:column; padding:12px 14px 12px; }
+    .mm-card-tags { display:flex; flex-wrap:wrap; gap:6px; }
+    .mm-card-tag { display:inline-flex; align-items:center; height:26px; padding:0 10px; border-radius:999px; font-size:12px; font-weight:800; }
+    .mm-card-title { margin:8px 0 2px; font-size:19px; line-height:1.4; letter-spacing:.03em; overflow-wrap:anywhere;
+      display:-webkit-box; -webkit-line-clamp:2; -webkit-box-orient:vertical; overflow:hidden; }
+    .mm-card-text { margin:4px 0 0; font-size:14px; line-height:1.75; color:#333; white-space:pre-line; overflow-wrap:anywhere;
+      display:-webkit-box; -webkit-line-clamp:3; -webkit-box-orient:vertical; overflow:hidden; }
+    .mm-card-lastcomment { display:flex; align-items:center; gap:6px; margin:10px 0 0; padding:7px 10px; border-radius:10px; background:var(--mm-bg2);
+      font-size:12.5px; color:var(--mm-ink2); white-space:nowrap; overflow:hidden; text-overflow:ellipsis; }
+    .mm-card-lastcomment strong { color:var(--mm-ink); flex-shrink:0; }
+    .mm-card-foot { display:flex; align-items:center; justify-content:space-between; gap:10px; margin-top:12px; }
+    .mm-card-by { display:flex; align-items:baseline; gap:5px; min-width:0; font-size:16px; font-weight:800; white-space:nowrap; overflow:hidden; }
+    .mm-card-by small { font-size:12px; font-weight:700; color:var(--mm-ink3); }
+    .mm-card-by em { font-style:normal; font-size:11px; font-weight:600; color:var(--mm-ink3); margin-left:4px; }
+    .mm-card-actions { display:flex; gap:6px; flex-shrink:0; }
+    .mm-act { position:relative; display:inline-flex; align-items:center; justify-content:center; gap:5px; height:40px; min-width:58px; padding:0 12px;
+      box-sizing:border-box; border-radius:999px; border:1.5px solid var(--mm-line); background:#fff; color:var(--mm-ink2);
+      font-family:inherit; font-size:14px; font-weight:800; cursor:pointer; -webkit-tap-highlight-color:transparent; }
+    .mm-like.is-liked { color:var(--mm-pink); border-color:var(--mm-pink); background:#FCE0EE; }
+    .mm-like.is-liked .mm-icon { fill:currentColor; }
+    .mm-like.is-pop .mm-icon { animation:mmHeart .5s cubic-bezier(.2,1.8,.4,1); }
+    .mm-like.is-pop::before, .mm-like.is-pop::after { content:""; position:absolute; left:21px; top:50%; pointer-events:none; }
+    .mm-like.is-pop::after { width:26px; height:26px; margin:-13px; border-radius:50%; border:2px solid var(--mm-pink); animation:mmRing .5s ease-out forwards; }
+    .mm-like.is-pop::before { width:4px; height:4px; margin:-2px; border-radius:50%;
+      box-shadow:0 -15px var(--mm-pink), 13px -8px var(--mm-yellow), 13px 8px var(--mm-pink), 0 15px var(--mm-green), -13px 8px var(--mm-pink), -13px -8px var(--mm-yellow);
+      animation:mmSpark .55s ease-out forwards; }
+    @keyframes mmHeart { 0% { transform:scale(.6); } 60% { transform:scale(1.35); } 100% { transform:scale(1); } }
+    @keyframes mmRing { from { transform:scale(.4); opacity:1; } to { transform:scale(1.6); opacity:0; } }
+    @keyframes mmSpark { from { transform:scale(.4); opacity:1; } to { transform:scale(1.5); opacity:0; } }
+    .mm-empty { padding:40px 16px; text-align:center; font-size:14px; color:var(--mm-ink3); }
+    /* スクロールして画面に入ってきたカードをふわっと出す（対応ブラウザだけ。JSを使わないので重くならない） */
+    @supports (animation-timeline: view()) {
+      @media (prefers-reduced-motion: no-preference) {
+        .mm-cards .mm-card { animation:mmCardIn linear both; animation-timeline:view(); animation-range:entry 0% entry 30%; }
+      }
+    }
+    @keyframes mmCardIn { from { opacity:0; transform:translateY(28px) scale(.97); } to { opacity:1; transform:none; } }
+    /* ===== 投稿フォーム ===== */
+    .mm-form { max-width:640px; margin:0 auto; background:var(--mm-bg2); color:var(--mm-ink);
+      font-family:"M PLUS Rounded 1c","Hiragino Maru Gothic ProN",system-ui,sans-serif; }
+    .mm-form-back { margin:12px 16px 0; }
+    .mm-form-intro { padding:28px 20px 22px; text-align:center; background:var(--mm-bg); border-bottom:1px solid var(--mm-line); }
+    .mm-form-intro h1 { margin:0 0 8px; font-size:clamp(22px,6vw,30px); line-height:1.5; letter-spacing:.06em; }
+    .mm-form-intro p:last-child { margin:0; font-size:13px; color:var(--mm-ink2); }
+    .mm-form-body { padding:4px 16px 16px; }
+    .mm-form-field { margin-top:24px; }
+    .mm-form-sub { margin-top:14px; padding-left:32px; }
+    .mm-form-label { display:flex; align-items:center; flex-wrap:wrap; gap:8px; margin-bottom:10px; font-size:15px; font-weight:800; color:var(--mm-ink); }
+    .mm-form-label.is-sub { font-size:14px; }
+    .mm-form-label em { font-style:normal; font-size:12px; font-weight:600; color:var(--mm-ink3); }
+    .mm-form-num { display:grid; place-items:center; flex-shrink:0; width:24px; height:24px; border-radius:50%; background:var(--mm-ink); color:#fff; font-size:12px; }
+    .mm-form-req { padding:2px 8px; border-radius:999px; background:#FCE0EE; color:var(--mm-pink); font-size:11px; font-weight:800; }
+    .mm-form-opt { padding:2px 8px; border-radius:999px; background:#EFEFEA; color:var(--mm-ink3); font-size:11px; font-weight:700; }
+    .mm-form-input { display:block; width:100%; height:50px; box-sizing:border-box; padding:0 14px; border:1.5px solid var(--mm-line); border-radius:14px;
+      background-color:#fff; font-family:inherit; font-size:16px; color:var(--mm-ink); outline:none; -webkit-appearance:none; appearance:none; }
+    select.mm-form-input { padding-right:40px; background-image:url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='14' height='14' viewBox='0 0 24 24' fill='none' stroke='%238A8A84' stroke-width='3' stroke-linecap='round'%3E%3Cpath d='M6 9l6 6 6-6'/%3E%3C/svg%3E");
+      background-repeat:no-repeat; background-position:right 14px center; }
+    .mm-form-textarea { height:auto; min-height:132px; padding:12px 14px; line-height:1.7; resize:vertical; }
+    .mm-form-help { margin:6px 2px 0; font-size:12px; line-height:1.6; color:var(--mm-ink3); }
+    .mm-form-row { display:flex; justify-content:space-between; gap:12px; }
+    .mm-form-row span:last-child { flex-shrink:0; }
+    .mm-form-photos { display:flex; flex-wrap:wrap; gap:8px; }
+    .mm-form-thumb, .mm-form-add { position:relative; flex-shrink:0; width:96px; height:96px; box-sizing:border-box; border-radius:14px; overflow:hidden; }
+    .mm-form-thumb { animation:mmPop .35s cubic-bezier(.2,1.4,.4,1); }
+    .mm-form-thumb img { display:block; width:100%; height:100%; object-fit:cover; }
+    .mm-form-thumb button { position:absolute; top:4px; right:4px; display:grid; place-items:center; width:26px; height:26px; padding:0; border:none;
+      border-radius:50%; background:rgba(0,0,0,.55); color:#fff; cursor:pointer; }
+    .mm-form-first { position:absolute; left:6px; bottom:6px; padding:2px 7px; border-radius:999px; background:var(--mm-green); color:#fff; font-size:10px; font-weight:800; }
+    .mm-form-add { display:flex; flex-direction:column; align-items:center; justify-content:center; gap:4px; border:2px dashed var(--mm-green);
+      background:var(--mm-green-soft); color:var(--mm-green-dark); font-family:inherit; font-size:12px; font-weight:800; cursor:pointer; }
+    .mm-form-add:only-child { width:100%; height:120px; flex-direction:row; gap:10px; font-size:15px; }
+    .mm-form-tags { display:flex; flex-wrap:wrap; gap:8px; }
+    .mm-form-tag { display:inline-flex; align-items:center; gap:4px; height:40px; padding:0 14px; box-sizing:border-box; border-radius:999px;
+      border:1.5px solid var(--mm-line); background:#fff; color:var(--c); font-family:inherit; font-size:14px; font-weight:800; cursor:pointer;
+      transition:background .15s, color .15s, border-color .15s; -webkit-tap-highlight-color:transparent; }
+    .mm-form-tag.is-on { background:var(--c); border-color:var(--c); color:#fff; animation:mmPop .3s cubic-bezier(.2,1.6,.4,1); }
+    @keyframes mmPop { 0% { transform:scale(.9); } 50% { transform:scale(1.07); } 100% { transform:scale(1); } }
+    .mm-form-two { display:grid; grid-template-columns:1fr 1fr; gap:8px; }
+    .mm-form-preview { margin-top:28px; }
+    .mm-form-preview-label { margin:0 2px 8px; font-size:12px; font-weight:800; letter-spacing:.1em; color:var(--mm-green); }
+    .mm-card.is-preview { cursor:default; border:1.5px solid var(--mm-green); }
+    .mm-form-submit { position:sticky; bottom:0; z-index:20; padding:14px 16px calc(14px + env(safe-area-inset-bottom,0px));
+      background:linear-gradient(rgba(250,250,247,0), var(--mm-bg2) 30%); }
+    .mm-form-submit p { margin:0 0 6px; text-align:center; font-size:12px; font-weight:700; color:var(--mm-pink); }
+    .mm-form-submit .mm-btn { width:100%; height:54px; font-size:17px; }
+    .mm-form-done { padding:90px 24px; text-align:center; }
+    .mm-form-done h2 { margin:18px 0 8px; font-size:26px; letter-spacing:.06em; animation:mmUp .6s ease .5s both; }
+    .mm-form-done p { margin:0; font-size:14px; color:var(--mm-ink2); animation:mmUp .6s ease .65s both; }
+    .mm-done-check { width:84px; height:84px; fill:none; stroke:var(--mm-green); stroke-width:3; stroke-linecap:round; stroke-linejoin:round; }
+    .mm-done-check circle { stroke-dasharray:151; stroke-dashoffset:151; animation:mmDraw .6s ease forwards; }
+    .mm-done-check path { stroke-dasharray:36; stroke-dashoffset:36; animation:mmDraw .4s ease .45s forwards; }
+    @keyframes mmDraw { to { stroke-dashoffset:0; } }
+    @media (prefers-reduced-motion: reduce) {
+      .mm-reveal .mm-phrase, .mm-like.is-pop .mm-icon, .mm-like.is-pop::before, .mm-like.is-pop::after, .mm-form-tag.is-on, .mm-form-thumb,
+      .mm-form-done h2, .mm-form-done p, .mm-card-photo.is-loading { animation:none !important; }
+      .mm-done-check circle, .mm-done-check path { animation:none; stroke-dashoffset:0; }
+      .mm-like.is-pop::before, .mm-like.is-pop::after { display:none; }
     }
     @media (max-width:1280px) { .mm-mon-tagline { display:none; } }
     @media (max-width:600px) {
