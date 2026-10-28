@@ -4259,6 +4259,8 @@ function SpotCard({ post, tagMap, slide, progress, index, total, leaving, onOpen
   const loading = post.photo === undefined;
   const layout = (!loading && photos.length > 0 && photoOrient.get(post.id)) || 'wide';
   const { title, body } = splitPostText(post);
+  const comments = post.comments || [];
+  const last = comments[comments.length - 1];
   const by = <div className="mm-spot-by"><small>by</small>{post.penname || '名無し'}</div>;
   return (
     <article className={`mm-spot is-${layout}${leaving ? ' is-leaving' : ''}`}
@@ -4297,6 +4299,11 @@ function SpotCard({ post, tagMap, slide, progress, index, total, leaving, onOpen
         {title && <h3 className="mm-spot-title mm-heading-mincho"><Phrases text={title}/></h3>}
         {body && <p className="mm-spot-text">{body}</p>}
         {post.url && <PostLink url={post.url}/>}
+        {/* スマホのカードと同じく、いちばん新しいコメントを1行で見せる */}
+        {last && (
+          <p className="mm-spot-lastcomment"><Icon name="chat" size={18}/><strong>{last.name}</strong><span>{last.text}</span>
+            {comments.length > 1 && <em>ほか{comments.length - 1}件</em>}</p>
+        )}
         {layout === 'tall' && by}
         <div className="mm-spot-prog">
           <span className="mm-spot-bar"><i style={{ width: `${Math.min(100, progress * 100)}%` }}/></span>
@@ -4510,6 +4517,18 @@ function BottomSheet({ title, onClose, footer, children }) {
   );
 }
 
+// エリア・ジャンルのシートの下：選び直し用のクリアと、今の選び方で何件あるか（閉じると絞り込まれる）
+function SheetFooter({ n, onClear }) {
+  return (
+    <>
+      <button type="button" className="mm-btn" onClick={onClear}>クリア</button>
+      <span style={{ flex: 1, alignSelf: 'center', textAlign: 'right', fontSize: '0.8125rem', color: C.inkSub }}>
+        <strong style={{ fontSize: '1rem', color: C.ink, marginRight: 2 }}>{n}</strong>件　<span style={{ color: C.inkLight }}>閉じると絞り込みます</span>
+      </span>
+    </>
+  );
+}
+
 // エリアのシート（スマホ・PC共通）。
 // rows: [{ key, label, color, n, subs: [{ key, label, n }] }]
 // エリアの行をタップすると「〇〇すべて」が選ばれ、その中の県などが開く。
@@ -4518,12 +4537,11 @@ function AreaSheet({ rows, allCount, initArea = '', initSub = '', countFor, onAp
   const [sb, setSb] = useState(initSub);
   const n = countFor(a, sb);
   const subRadio = (on, col) => ({ ...s.radio, ...(on ? { borderColor: col, background: col, boxShadow: 'inset 0 0 0 4px #fff' } : {}) });
+  // 「表示」ボタンは置かず、閉じた時点（✕・外側タップ・下に引く）で選んだ内容で絞り込む。変えていなければ閉じるだけ
+  const close = () => (a === initArea && sb === initSub ? onClose() : onApply(a, sb));
   return (
-    <BottomSheet title="エリアを選ぶ" onClose={onClose}
-      footer={<>
-        <button type="button" className="mm-btn" onClick={() => { setA(''); setSb(''); }}>クリア</button>
-        <button type="button" className="mm-btn primary" onClick={() => onApply(a, sb)} disabled={n === 0} style={{ flex: 1 }}>{n}件を表示</button>
-      </>}>
+    <BottomSheet title="エリアを選ぶ" onClose={close}
+      footer={<SheetFooter n={n} onClear={() => { setA(''); setSb(''); }}/>}>
       <button onClick={() => { setA(''); setSb(''); }} style={s.radioRow}>
         <span style={{ ...s.radio, ...(a === '' ? s.radioOn : {}) }}/>
         <span style={{ flex: 1, fontWeight: 700 }}>すべてのエリア</span>
@@ -4578,12 +4596,12 @@ function GenreSheet({ tags, base, init = [], onApply, onClose }) {
       .sort((x, y) => y.n - x.n || order.get(x.t.key) - order.get(y.t.key));
   }, [tags, base]);
   const n = sel.length === 0 ? base.length : base.filter(p => (p.tags || []).some(k => sel.includes(k))).length;
+  // エリアと同じく、閉じた時点で絞り込む。変えていなければ閉じるだけ
+  const changed = sel.length !== init.length || sel.some(k => !init.includes(k));
+  const close = () => (changed ? onApply(sel) : onClose());
   return (
-    <BottomSheet title="ジャンルを選ぶ" onClose={onClose}
-      footer={<>
-        <button type="button" className="mm-btn" onClick={() => setSel([])}>クリア</button>
-        <button type="button" className="mm-btn primary" onClick={() => onApply(sel)} disabled={n === 0} style={{ flex: 1 }}>{n}件を表示</button>
-      </>}>
+    <BottomSheet title="ジャンルを選ぶ" onClose={close}
+      footer={<SheetFooter n={n} onClear={() => setSel([])}/>}>
       <div style={{ fontFamily: FONT_HAND, fontSize: '0.75rem', color: C.inkSub, marginBottom: 10 }}>
         複数選べます（どれかに当てはまる投稿を表示）
       </div>
@@ -8099,6 +8117,13 @@ if (typeof document !== 'undefined' && !document.getElementById('mn-global-style
     .mm-spot-text { margin:0; font-size:clamp(15px,1.25vw,19px); line-height:1.9; color:var(--mm-ink); white-space:pre-line; overflow-wrap:anywhere;
       display:-webkit-box; -webkit-line-clamp:9; -webkit-box-orient:vertical; overflow:hidden; }
     .mm-spot.is-wide .mm-spot-text { line-height:1.8; -webkit-line-clamp:3; }
+    /* 最新のコメント。PCは場所に余裕があるので、1行で切らずに2行まで見せる */
+    .mm-spot-lastcomment { display:flex; align-items:flex-start; gap:8px; margin:14px 0 0; padding:10px 14px; border-radius:12px; background:var(--mm-bg2);
+      font-size:clamp(14px,1.1vw,17px); line-height:1.6; color:var(--mm-ink2); min-width:0; }
+    .mm-spot-lastcomment .mm-icon { margin-top:.25em; }
+    .mm-spot-lastcomment strong { color:var(--mm-ink); flex-shrink:0; }
+    .mm-spot-lastcomment span { min-width:0; overflow-wrap:anywhere; display:-webkit-box; -webkit-line-clamp:2; -webkit-box-orient:vertical; overflow:hidden; }
+    .mm-spot-lastcomment em { flex-shrink:0; font-style:normal; font-size:.85em; color:var(--mm-ink3); }
     .mm-spot-by { display:flex; align-items:baseline; gap:6px; font-size:24px; font-weight:800; white-space:nowrap; color:var(--mm-ink); }
     .mm-spot-by small { font-size:16px; font-weight:700; color:var(--mm-ink3); }
     .mm-spot.is-tall .mm-spot-by { margin-top:auto; padding-top:16px; }
