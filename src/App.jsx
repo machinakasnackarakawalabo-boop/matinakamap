@@ -2591,6 +2591,14 @@ function JapanMapView({ pins, currentRegion, viewBox, getPinInfo, stores, isPinM
   return (
     <svg ref={svgRef} viewBox={vb} data-norm-w={VW} data-norm-h={VH} style={{ ...s.mapSvg, cursor: isPinMode ? 'crosshair' : undefined }} preserveAspectRatio="xMidYMid meet">
       <defs>
+        {/* 白抜き地図：海の薄緑と陸の白は真っ白に、境界線は少し濃くする */}
+        <filter id="mm-outline" colorInterpolationFilters="sRGB">
+          <feComponentTransfer>
+            <feFuncR type="table" tableValues="0 .08 .16 .24 .32 .4 .48 .56 .62 1 1"/>
+            <feFuncG type="table" tableValues="0 .08 .16 .24 .32 .4 .48 .56 .62 1 1"/>
+            <feFuncB type="table" tableValues="0 .08 .16 .24 .32 .4 .48 .56 .62 1 1"/>
+          </feComponentTransfer>
+        </filter>
         <filter id="shadow" x="-50%" y="-50%" width="200%" height="200%">
           <feGaussianBlur in="SourceAlpha" stdDeviation="2"/>
           <feOffset dx="1" dy="2" result="o"/>
@@ -2602,7 +2610,7 @@ function JapanMapView({ pins, currentRegion, viewBox, getPinInfo, stores, isPinM
 
       {/* 背景：日本地図画像 — 店舗ズーム時は鮮明に、通常はシンプル線画風 */}
       {styled && !isPinMode ? (
-        <image href="/japan-map-styled.jpg" x="0" y="0" width={VW} height={VH} preserveAspectRatio="xMidYMid meet"/>
+        <image href="/japan-map-styled.jpg" x="0" y="0" width={VW} height={VH} preserveAspectRatio="xMidYMid meet" filter="url(#mm-outline)"/>
       ) : (
         <image
           href={JAPAN_MAP_IMG}
@@ -7773,12 +7781,12 @@ if (typeof document !== 'undefined' && !document.getElementById('mn-global-style
     .mm-mon-tagline { padding-left:14px; margin-left:4px; border-left:1px solid var(--mm-line); font-size:13px; letter-spacing:.06em; color:var(--mm-ink2); white-space:nowrap; }
     .mm-mon-search { flex:0 1 340px; }
     .mm-mon-main { flex:1 1 0%; min-height:0; display:grid; grid-template-columns:minmax(0,42fr) minmax(0,58fr); }
-    .mm-mon-map { position:relative; min-width:0; overflow:hidden; background:#EAF0EC; }
+    .mm-mon-map { position:relative; min-width:0; overflow:hidden; background:#fff; }
     .mm-mon-mapbox { position:absolute; inset:96px 8px 128px; display:flex; align-items:center; justify-content:center; }
     .mm-mon-mapbox > * { max-width:100%; max-height:100%; }
     .mm-mon-areas { position:absolute; top:18px; left:20px; right:20px; display:flex; flex-wrap:wrap; gap:6px; z-index:5; }
     .mm-areachip { display:inline-flex; align-items:center; gap:6px; height:34px; padding:0 12px; box-sizing:border-box; border-radius:999px;
-      border:1.5px solid rgba(0,0,0,.06); background:rgba(255,255,255,.92); color:var(--mm-ink2); font-family:inherit; font-size:13px; font-weight:700;
+      border:1.5px solid var(--mm-line); background:#fff; color:var(--mm-ink2); font-family:inherit; font-size:13px; font-weight:700;
       white-space:nowrap; cursor:pointer; box-shadow:0 2px 6px rgba(0,0,0,.05); }
     .mm-areachip i { width:7px; height:7px; border-radius:50%; flex-shrink:0; }
     .mm-areachip.is-on { background:var(--mm-ink); border-color:var(--mm-ink); color:#fff; }
