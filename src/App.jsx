@@ -773,6 +773,66 @@ function useSettings() {
 }
 
 // =====================================
+// 写真の並べ替え（ドラッグ）ヘルパー（共通）
+// =====================================
+// サムネイルをつかんで動かすと、指（マウス）が乗ったサムネイルの位置に入れ替わる。マウス・指の両方で動く。
+// 少し動かしてからドラッグ開始にして、✕ボタンのタップと区別する。
+// 使い方：各サムネイルに {...bind(i)} を付け、style に dragStyle(i) を混ぜる。
+function usePhotoReorder(list, onChange) {
+  const [dragIndex, setDragIndex] = useState(null);
+  const drag = useRef(null);
+  const listRef = useRef(list);
+  listRef.current = list;
+  const onChangeRef = useRef(onChange);
+  onChangeRef.current = onChange;
+
+  const end = (e) => {
+    if (drag.current?.pointerId !== e.pointerId) return;
+    drag.current = null;
+    setDragIndex(null);
+  };
+
+  const bind = (i) => ({
+    'data-photo-index': i,
+    onPointerDown: (e) => {
+      if (e.button !== 0 || e.target.closest('button')) return;
+      drag.current = { from: i, x: e.clientX, y: e.clientY, pointerId: e.pointerId, active: false, box: e.currentTarget.parentElement };
+    },
+    onPointerMove: (e) => {
+      const d = drag.current;
+      if (!d || d.pointerId !== e.pointerId) return;
+      if (!d.active) {
+        if (Math.hypot(e.clientX - d.x, e.clientY - d.y) < 6) return;
+        d.active = true;
+        try { e.currentTarget.setPointerCapture(e.pointerId); } catch {}
+        setDragIndex(d.from);
+      }
+      const over = document.elementFromPoint(e.clientX, e.clientY)?.closest('[data-photo-index]');
+      if (!over || over.parentElement !== d.box) return;
+      const to = Number(over.dataset.photoIndex);
+      if (to === d.from) return;
+      const next = [...listRef.current];
+      const [moved] = next.splice(d.from, 1);
+      next.splice(to, 0, moved);
+      d.from = to;
+      setDragIndex(to);
+      onChangeRef.current(next);
+    },
+    onPointerUp: end,
+    onPointerCancel: end,
+  });
+
+  // touchAction:none がないとスマホでは指を動かした時点でページのスクロールになってしまう
+  const dragStyle = (i) => ({
+    touchAction: 'none', userSelect: 'none', WebkitUserSelect: 'none',
+    cursor: dragIndex === i ? 'grabbing' : 'grab',
+    ...(dragIndex === i ? { transform: 'scale(1.08)', boxShadow: '0 8px 20px rgba(0,0,0,0.25)', zIndex: 2, opacity: 0.9 } : {}),
+  });
+
+  return { bind, dragStyle };
+}
+
+// =====================================
 // 写真リサイズヘルパー（共通）
 // =====================================
 async function resizeImageFile(file, callback) {
@@ -1205,6 +1265,7 @@ function PostForm({ onSubmit, onCancel, hideBack = false, stores, tags: availabl
   const [storeId, setStoreId] = useState('');
   const [message, setMessage] = useState('');
   const [photos, setPhotos] = useState([]);        // 写真（base64の配列）
+  const photoDrag = usePhotoReorder(photos, setPhotos);
   const photoInputRef = useRef(null);              // ファイル選択input参照
   const [ageGroup, setAgeGroup] = useState('');    // 年齢層
   const [gender, setGender] = useState('');        // 性別
@@ -1419,8 +1480,8 @@ function PostForm({ onSubmit, onCancel, hideBack = false, stores, tags: availabl
           <input ref={photoInputRef} type="file" accept="image/*,.heic,.heif" multiple onChange={handlePhotoChange} style={{ display: 'none' }}/>
           <div className="mm-form-photos">
             {photos.map((ph, i) => (
-              <div key={i} className="mm-form-thumb">
-                <img src={ph} alt={`写真${i + 1}`}/>
+              <div key={i} className="mm-form-thumb" {...photoDrag.bind(i)} style={photoDrag.dragStyle(i)}>
+                <img src={ph} alt={`写真${i + 1}`} draggable={false}/>
                 {i === 0 && <span className="mm-form-first">表紙</span>}
                 <button type="button" onClick={() => setPhotos(photos.filter((_, idx) => idx !== i))} aria-label={`写真${i + 1}を外す`}><Icon name="x" size={14}/></button>
               </div>
@@ -1429,7 +1490,7 @@ function PostForm({ onSubmit, onCancel, hideBack = false, stores, tags: availabl
               <Icon name="camera" size={28}/><span>{photos.length === 0 ? '写真を選ぶ' : '追加'}</span>
             </button>
           </div>
-          <p className="mm-form-help">1枚目が表紙になります。自動で軽くしてから送ります</p>
+          <p className="mm-form-help">1枚目が表紙になります。写真をドラッグすると順番を入れ替えられます。自動で軽くしてから送ります</p>
         </div>
 
         {/* 2 おすすめの場所 */}
@@ -4767,7 +4828,10 @@ function CustomerBrowse({ posts, updatePost, tags, postsLoading = false, postsLo
       )}
       </div>
 
-      <div style={{ height: 32 }}/>
+      {/* 管理画面への入口（PC版と同じく小さな文字リンク）。お客様モードを外したページの管理タブを開く */}
+      <div style={{ textAlign: 'center', padding: '8px 0 32px' }}>
+        <a href="/?view=admin" className="mm-textlink">管理</a>
+      </div>
 
       {sheet === 'area' && (
         <AreaSheet rows={areaRows} allCount={areaBase.length} initArea={area} initSub={sub}
@@ -5418,6 +5482,7 @@ function PostsTab({ posts, removePost, removeAllPosts, updatePost, stores, reque
   const [editingPost, setEditingPost] = useState(null);
   const [editForm, setEditForm] = useState({});
   const editPhotoInputRef = useRef(null);
+  const editPhotoDrag = usePhotoReorder(editForm.photos || [], (photos) => setEditForm(f => ({ ...f, photos })));
   const filtered = filter ? posts.filter(p => (p.message + p.penname + (p.prefectureName||'')).includes(filter)) : posts;
 
   // datetime-local 変換ヘルパー
@@ -5748,8 +5813,9 @@ function PostsTab({ posts, removePost, removeAllPosts, updatePost, stores, reque
                   {editForm.photos && editForm.photos.length > 0 && (
                     <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap', marginBottom: 8 }}>
                       {editForm.photos.map((ph, i) => (
-                        <div key={i} style={{ position: 'relative', width: 72, height: 72 }}>
-                          <img src={ph} alt="" style={{ width: '100%', height: '100%', objectFit: 'cover', borderRadius: 6, border: `1px solid ${C.line}` }}/>
+                        <div key={i} {...editPhotoDrag.bind(i)} style={{ position: 'relative', width: 72, height: 72, borderRadius: 6, ...editPhotoDrag.dragStyle(i) }}>
+                          <img src={ph} alt="" draggable={false} style={{ width: '100%', height: '100%', objectFit: 'cover', borderRadius: 6, border: `1px solid ${C.line}` }}/>
+                          {i === 0 && <span style={{ position: 'absolute', left: 4, bottom: 4, padding: '1px 6px', borderRadius: 999, background: C.green, color: '#fff', fontSize: '0.5625rem', fontWeight: 700 }}>表紙</span>}
                           <button onClick={() => setEditForm(f => ({ ...f, photos: f.photos.filter((_, j) => j !== i) }))}
                             style={{ position: 'absolute', top: 2, right: 2, width: 20, height: 20, borderRadius: '50%', background: 'rgba(0,0,0,0.7)', color: '#fff', border: 'none', cursor: 'pointer', fontSize: '0.6875rem', display: 'flex', alignItems: 'center', justifyContent: 'center', padding: 0 }}>
                             ✕
@@ -5770,6 +5836,9 @@ function PostsTab({ posts, removePost, removeAllPosts, updatePost, stores, reque
                     style={{ ...s.btnGhost, fontSize: '0.75rem', padding: '4px 12px' }}>
                     ＋ 写真を追加
                   </button>
+                  {editForm.photos?.length > 1 && (
+                    <span style={{ marginLeft: 8, fontFamily: FONT_HAND, fontSize: '0.625rem', color: C.inkLight }}>写真をドラッグで並べ替え</span>
+                  )}
                 </div>
               )}
 
@@ -8142,11 +8211,14 @@ if (typeof document !== 'undefined' && !document.getElementById('mn-global-style
       .mm-btn-lg { height:48px; padding:0 22px; font-size:15px; }
       .mm-iconbtn { width:40px; height:40px; }
       .mm-wide { display:none; }
-      .mm-toolbar { flex-wrap:wrap; gap:8px; padding:10px 12px; }
+      /* スクロールしてもエリア・ジャンルの行はヘッダーの下に残す。
+         検索の行（上余白10＋高さ40＋行間8＝58px）だけヘッダーの裏に隠れるよう、その分だけ上にずらして固定する */
+      .mm-toolbar { flex-wrap:wrap; gap:8px; padding:10px 12px; position:sticky; top:calc(6px + env(safe-area-inset-top,0px)); z-index:35; }
       .mm-search { flex:1 1 100%; height:40px; }
       .mm-search input { font-size:16px; } /* 16px未満だとiPhoneが入力時に画面を拡大してしまう */
       .mm-toolbar .mm-select { flex:1 1 calc(50% - 4px); min-width:0; height:40px; font-size:13px; }
-      .mm-resultbar { padding:8px 12px; }
+      /* 件数の行はエリア・ジャンルの行（高さ40＋下余白10＋線1＝51px）の下に重ねて固定 */
+      .mm-resultbar { padding:8px 12px; top:calc(115px + env(safe-area-inset-top,0px)); }
       .mm-resultbar .mm-select select { font-size:13px; }
       .mm-intro { padding:36px 20px 28px; }
       .mm-intro-title { letter-spacing:.04em; margin-bottom:20px; }
