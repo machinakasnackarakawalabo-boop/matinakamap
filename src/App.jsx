@@ -5028,11 +5028,13 @@ function AdminLoginScreen({ settings, onLogin }) {
 // =====================================
 function AdminScreen({ posts, removePost, removeAllPosts, updatePost, requestPhotos, loadPhotosNow, stores, saveStore, deleteStore, settings, updateSettings, events, eventsCtrl, wants, wantsCtrl, cityHopes, cityHopesCtrl, gifts, saveGift, deleteGift, tags, addTag, updateTag, deleteTag, moveTag }) {
   const [tab, setTab] = useState('posts');
+  const phone = useIsMobile(600);
 
   const boardCount = events.length + wants.length + cityHopes.length;
 
   return (
-    <div style={s.adminScreen}>
+    // スマホは左右の余白を詰め、下に固定のタブ切り替えがあるので最後の行が隠れないよう下を空ける
+    <div style={{ ...s.adminScreen, ...(phone ? { padding: '16px 12px 120px' } : {}) }}>
       <header style={{ display: 'flex', alignItems: 'center', gap: 14, marginBottom: 8 }}>
         <div style={s.adminKanji}>街中</div>
         <div>
@@ -5479,6 +5481,29 @@ function PostsTab({ posts, removePost, removeAllPosts, updatePost, stores, reque
   const [filter, setFilter] = useState('');
   const [confirmId, setConfirmId] = useState(null);
   const [confirmAll, setConfirmAll] = useState(false);
+  const phone = useIsMobile(600);
+
+  // ★・編集・削除のボタン（PCの表とスマホのカードで共通。size でボタンの大きさを変える）
+  const rowActions = (post, size) => confirmId === post.id ? (
+    <>
+      <button onClick={() => { removePost(post.id); setConfirmId(null); }} style={{ ...s.rowBtn, background: C.pink, color: '#fff', borderColor: C.pink, ...size }}>確定</button>
+      <button onClick={() => setConfirmId(null)} style={{ ...s.rowBtn, ...size }}>×</button>
+    </>
+  ) : (
+    <>
+      <button
+        onClick={() => updatePost(post.id, pr => ({ ...pr, featured: !pr.featured }))}
+        title={post.featured ? 'おすすめから外す' : '「面白い」タブに出す'}
+        style={{ ...s.rowBtn, ...size,
+          color: post.featured ? C.ink : C.inkLight,
+          background: post.featured ? C.yellowLight : 'transparent',
+          borderColor: post.featured ? C.yellow : C.line, fontWeight: post.featured ? 700 : 400 }}>
+        {post.featured ? '★' : '☆'}
+      </button>
+      <button onClick={() => startEdit(post)} style={{ ...s.rowBtn, color: C.green, borderColor: C.green, ...size }}>編集</button>
+      <button onClick={() => setConfirmId(post.id)} style={{ ...s.rowBtn, color: C.pink, borderColor: C.pink, ...size }}>削除</button>
+    </>
+  );
   const [editingPost, setEditingPost] = useState(null);
   const [editForm, setEditForm] = useState({});
   const editPhotoInputRef = useRef(null);
@@ -5594,6 +5619,33 @@ function PostsTab({ posts, removePost, removeAllPosts, updatePost, stores, reque
 
       {filtered.length === 0 ? (
         <div style={{ textAlign: 'center', padding: 60, fontFamily: FONT_HAND, color: C.inkLight }}>投稿がありません</div>
+      ) : phone ? (
+        // スマホ：表は横幅が足りないので、1件ずつカードにする
+        <div style={{ display: 'flex', flexDirection: 'column', gap: 10 }}>
+          {filtered.map(post => (
+            <div key={post.id} style={{ border: `1px solid ${C.line}`, borderRadius: 8, padding: 12, background: C.bgWhite }}>
+              <div style={{ display: 'flex', gap: 10, alignItems: 'flex-start' }}>
+                {post.photo ? (
+                  <img src={post.photo} alt="" style={{ width: 56, height: 56, flexShrink: 0, objectFit: 'cover', borderRadius: 6, border: `1px solid ${C.line}` }}/>
+                ) : (
+                  <div style={{ width: 56, height: 56, flexShrink: 0, borderRadius: 6, background: C.bgOff, display: 'grid', placeItems: 'center', color: C.inkLight, fontSize: '0.75rem' }}>写真なし</div>
+                )}
+                <div style={{ minWidth: 0, flex: 1 }}>
+                  <div style={{ fontFamily: FONT_HAND, fontSize: '0.9375rem', fontWeight: 700, color: C.ink }}>{post.penname}</div>
+                  <div style={{ fontSize: '0.75rem', color: C.inkSub, marginTop: 2, lineHeight: 1.5 }}>
+                    {post.storeName ? `🏠 ${post.storeName}` : post.prefectureName}
+                    {' ・ '}{new Date(post.timestamp).toLocaleString('ja-JP', { month: 'numeric', day: 'numeric', hour: '2-digit', minute: '2-digit' })}
+                    {(post.ageGroup || post.gender) && <>{' ・ '}{[post.ageGroup, post.gender].filter(Boolean).join(' ')}</>}
+                  </div>
+                </div>
+              </div>
+              <div style={{ fontSize: '0.875rem', lineHeight: 1.6, marginTop: 8, whiteSpace: 'pre-wrap', overflowWrap: 'anywhere' }}>{post.message}</div>
+              <div style={{ display: 'flex', gap: 8, marginTop: 10, justifyContent: 'flex-end' }}>
+                {rowActions(post, { padding: '8px 14px', fontSize: '0.875rem', borderRadius: 6 })}
+              </div>
+            </div>
+          ))}
+        </div>
       ) : (
         <div style={s.adminTable}>
           <div style={s.adminTableHead}>
@@ -5626,26 +5678,7 @@ function PostsTab({ posts, removePost, removeAllPosts, updatePost, stores, reque
                 {new Date(post.timestamp).toLocaleString('ja-JP', { month: 'numeric', day: 'numeric', hour: '2-digit', minute: '2-digit' })}
               </div>
               <div style={{ flex: '0 0 130px', display: 'flex', gap: 4, flexWrap: 'wrap' }}>
-                {confirmId === post.id ? (
-                  <>
-                    <button onClick={() => { removePost(post.id); setConfirmId(null); }} style={{ ...s.rowBtn, background: C.pink, color: '#fff', borderColor: C.pink, padding: '3px 6px', fontSize: '0.6875rem' }}>確定</button>
-                    <button onClick={() => setConfirmId(null)} style={{ ...s.rowBtn, padding: '3px 6px', fontSize: '0.6875rem' }}>×</button>
-                  </>
-                ) : (
-                  <>
-                    <button
-                      onClick={() => updatePost(post.id, pr => ({ ...pr, featured: !pr.featured }))}
-                      title={post.featured ? 'おすすめから外す' : '「面白い」タブに出す'}
-                      style={{ ...s.rowBtn, padding: '3px 6px', fontSize: '0.6875rem',
-                        color: post.featured ? C.ink : C.inkLight,
-                        background: post.featured ? C.yellowLight : 'transparent',
-                        borderColor: post.featured ? C.yellow : C.line, fontWeight: post.featured ? 700 : 400 }}>
-                      {post.featured ? '★' : '☆'}
-                    </button>
-                    <button onClick={() => startEdit(post)} style={{ ...s.rowBtn, color: C.green, borderColor: C.green, padding: '3px 6px', fontSize: '0.6875rem' }}>編集</button>
-                    <button onClick={() => setConfirmId(post.id)} style={{ ...s.rowBtn, color: C.pink, borderColor: C.pink, padding: '3px 6px', fontSize: '0.6875rem' }}>削除</button>
-                  </>
-                )}
+                {rowActions(post, { padding: '3px 6px', fontSize: '0.6875rem' })}
               </div>
             </div>
           ))}
@@ -7183,6 +7216,7 @@ export default function App() {
   const cityHopesCtrl = useBoard(KEYS.cityHopes, 'cityhopes');
   const { gifts, saveGift, deleteGift } = useGifts();
   const { tags, addTag, updateTag, deleteTag, moveTag } = useTags();
+  const phone = useIsMobile(600);
 
   useEffect(() => {
     const params = new URLSearchParams(window.location.search);
@@ -7236,9 +7270,11 @@ export default function App() {
       return;
     }
     const scale = FONT_SIZE_ZOOM[settings.fontSize || '中'];
-    document.documentElement.style.fontSize = `${28.8 * scale}px`;
+    // 28.8px はお店の大きな画面向け。スマホで管理画面を開いたときは普通の大きさ（16px）を基準にする
+    const base = phone && view === 'admin' ? 16 : 28.8;
+    document.documentElement.style.fontSize = `${base * scale}px`;
     return () => { document.documentElement.style.fontSize = ''; };
-  }, [settings.fontSize, isCustomer]);
+  }, [settings.fontSize, isCustomer, phone, view]);
 
   // お客様モード：フォームのみ表示
   if (isCustomer) {
@@ -8212,13 +8248,16 @@ if (typeof document !== 'undefined' && !document.getElementById('mn-global-style
       .mm-iconbtn { width:40px; height:40px; }
       .mm-wide { display:none; }
       /* スクロールしてもエリア・ジャンルの行はヘッダーの下に残す。
-         検索の行（上余白10＋高さ40＋行間8＝58px）だけヘッダーの裏に隠れるよう、その分だけ上にずらして固定する */
-      .mm-toolbar { flex-wrap:wrap; gap:8px; padding:10px 12px; position:sticky; top:calc(6px + env(safe-area-inset-top,0px)); z-index:35; }
+         検索の行（上余白8＋高さ40＝48px）だけヘッダーの裏に隠れるよう、その分だけ上にずらして固定する。
+         ヘッダー直下には検索とエリアの間の行間8pxが見えるので、ボタンの上にも余白が残る */
+      .mm-toolbar { flex-wrap:wrap; gap:8px; padding:8px 12px 0; border-bottom:none; position:sticky; top:calc(16px + env(safe-area-inset-top,0px)); z-index:35; }
       .mm-search { flex:1 1 100%; height:40px; }
       .mm-search input { font-size:16px; } /* 16px未満だとiPhoneが入力時に画面を拡大してしまう */
       .mm-toolbar .mm-select { flex:1 1 calc(50% - 4px); min-width:0; height:40px; font-size:13px; }
-      /* 件数の行はエリア・ジャンルの行（高さ40＋下余白10＋線1＝51px）の下に重ねて固定 */
-      .mm-resultbar { padding:8px 12px; top:calc(115px + env(safe-area-inset-top,0px)); }
+      /* 件数の行はエリア・ジャンルの行（行間8＋高さ40＝48px）のすぐ下に固定。
+         上の行と同じ背景にして境目の線をなくし、ひとつの帯に見せる */
+      .mm-resultbar { padding:8px 12px; top:calc(112px + env(safe-area-inset-top,0px)); background:var(--mm-bg);
+        -webkit-backdrop-filter:none; backdrop-filter:none; }
       .mm-resultbar .mm-select select { font-size:13px; }
       .mm-intro { padding:36px 20px 28px; }
       .mm-intro-title { letter-spacing:.04em; margin-bottom:20px; }
