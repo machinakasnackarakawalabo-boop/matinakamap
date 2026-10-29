@@ -4503,7 +4503,7 @@ function BottomSheet({ title, onClose, footer, children }) {
       <div role="dialog" aria-modal="true" aria-label={title} onClick={(e) => e.stopPropagation()}
         style={{ ...s.sheet, ...(isMobile ? {} : { maxWidth: 480, borderRadius: 18 }),
           transform: `translateY(${dragY}px)`, transition: startY.current != null ? 'none' : 'transform 0.2s ease-out' }}>
-        <div onTouchStart={onTouchStart} onTouchMove={onTouchMove} onTouchEnd={onTouchEnd} style={{ touchAction: 'none' }}>
+        <div onTouchStart={onTouchStart} onTouchMove={onTouchMove} onTouchEnd={onTouchEnd} style={{ touchAction: 'none', flexShrink: 0 }}>
           <div style={s.sheetGrabber}/>
           <div style={s.sheetHead}>
             <div style={{ fontFamily: FONT_DISPLAY, fontSize: '1rem', fontWeight: 700, letterSpacing: 1 }}>{title}</div>
@@ -4511,19 +4511,19 @@ function BottomSheet({ title, onClose, footer, children }) {
           </div>
         </div>
         <div style={s.sheetBody}>{children}</div>
-        <div style={s.sheetFoot}>{footer}</div>
+        <div style={{ ...s.sheetFoot, flexShrink: 0 }}>{footer}</div>
       </div>
     </div>
   );
 }
 
-// エリア・ジャンルのシートの下：選び直し用のクリアと、今の選び方で何件あるか（閉じると絞り込まれる）
+// エリア・ジャンルのシートの下：選び直し用のクリアと、今の選び方で何件あるか（シートを閉じると絞り込まれる）
 function SheetFooter({ n, onClear }) {
   return (
     <>
       <button type="button" className="mm-btn" onClick={onClear}>クリア</button>
       <span style={{ flex: 1, alignSelf: 'center', textAlign: 'right', fontSize: '0.8125rem', color: C.inkSub }}>
-        <strong style={{ fontSize: '1rem', color: C.ink, marginRight: 2 }}>{n}</strong>件　<span style={{ color: C.inkLight }}>閉じると絞り込みます</span>
+        <strong style={{ fontSize: '1rem', color: C.ink, marginRight: 2 }}>{n}</strong>件
       </span>
     </>
   );
@@ -5714,10 +5714,17 @@ function PostsTab({ posts, removePost, removeAllPosts, updatePost, stores, reque
         const inp = { ...s.adminSearch, width: '100%', marginBottom: 0, boxSizing: 'border-box' };
         const sel = { ...inp };
         return (
-          <div style={{ position: 'fixed', inset: 0, background: 'rgba(0,0,0,0.5)', zIndex: 200, display: 'flex', alignItems: 'center', justifyContent: 'center', padding: 16, overflowY: 'auto' }}>
-            <div style={{ background: C.bgWhite, borderRadius: 12, padding: 24, width: '100%', maxWidth: 600, boxShadow: '0 8px 32px rgba(0,0,0,0.25)', maxHeight: '90vh', overflowY: 'auto' }}>
+          // 下の固定タブ（zIndex 1000）より上に出す。見出し（✕）と保存ボタンは固定し、中身だけスクロールさせる。
+          // 高さは vh ではなく背景に対する割合にする（iPhoneはアドレスバー等が出ていると vh が見える範囲より大きい）
+          <div style={{ position: 'fixed', inset: 0, background: 'rgba(0,0,0,0.5)', zIndex: 2000, display: 'flex', alignItems: 'center', justifyContent: 'center', padding: 12 }}>
+            <div style={{ background: C.bgWhite, borderRadius: 12, width: '100%', maxWidth: 600, boxShadow: '0 8px 32px rgba(0,0,0,0.25)', maxHeight: '100%', display: 'flex', flexDirection: 'column', overflow: 'hidden' }}>
 
-              <div style={{ fontFamily: FONT_DISPLAY, fontSize: '1rem', fontWeight: 700, letterSpacing: 2, marginBottom: 20 }}>投稿を編集</div>
+              <div style={{ flexShrink: 0, display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 8, padding: '12px 12px 12px 20px', borderBottom: `1px solid ${C.lineSoft}` }}>
+                <div style={{ fontFamily: FONT_DISPLAY, fontSize: '1rem', fontWeight: 700, letterSpacing: 2 }}>投稿を編集</div>
+                <button type="button" onClick={() => setEditingPost(null)} aria-label="閉じる" className="mm-iconbtn"><Icon name="x"/></button>
+              </div>
+
+              <div style={{ flex: 1, minHeight: 0, overflowY: 'auto', overscrollBehavior: 'contain', padding: '16px 20px' }}>
 
               {/* ペンネーム */}
               {fld('ペンネーム',
@@ -5893,7 +5900,9 @@ function PostsTab({ posts, removePost, removeAllPosts, updatePost, stores, reque
                 </div>
               )}
 
-              <div style={{ display: 'flex', gap: 8, justifyContent: 'flex-end', marginTop: 4 }}>
+              </div>
+
+              <div style={{ flexShrink: 0, display: 'flex', gap: 8, justifyContent: 'flex-end', padding: '12px 20px calc(12px + env(safe-area-inset-bottom, 0px))', borderTop: `1px solid ${C.lineSoft}`, background: C.bgWhite }}>
                 <button onClick={() => setEditingPost(null)} style={s.btnGhost}>キャンセル</button>
                 <button onClick={saveEdit} style={{ ...s.btnGhost, background: C.green, color: '#fff', borderColor: C.green }}>保存</button>
               </div>
@@ -7625,7 +7634,9 @@ const s = {
   facetLabel: { overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', minWidth: 0 },
   activeRow: { display: 'flex', gap: 6, alignItems: 'center', marginTop: 8, overflowX: 'auto', WebkitOverflowScrolling: 'touch', paddingBottom: 2 },
   sheetOverlay: { position: 'fixed', inset: 0, zIndex: 2500, background: 'rgba(0,0,0,0.4)', display: 'flex', alignItems: 'flex-end' },
-  sheet: { width: '100%', maxHeight: '85vh', display: 'flex', flexDirection: 'column', background: C.bgWhite,
+  // iPhoneの vh はアドレスバー等を除いた大きさなので、バーが出ていると見える範囲より高くなり、上の✕が画面外に出てしまう。
+  // 背景（実際に見えている範囲いっぱい）に対する割合で上限を決める
+  sheet: { width: '100%', maxHeight: '85%', display: 'flex', flexDirection: 'column', background: C.bgWhite,
     borderRadius: '18px 18px 0 0', boxShadow: '0 -8px 30px rgba(0,0,0,0.18)' },
   sheetGrabber: { width: 40, height: 5, borderRadius: 3, background: C.line, margin: '8px auto 4px' },
   sheetHead: { display: 'flex', alignItems: 'center', justifyContent: 'space-between', padding: '4px 16px 10px', borderBottom: `1px solid ${C.lineSoft}` },
