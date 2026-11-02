@@ -1444,14 +1444,6 @@ function PostForm({ onSubmit, onCancel, hideBack = false, stores, tags: availabl
   }
 
   const canSubmit = penname.trim() && prefecture && message.trim() && tags.length > 0 && (prefecture !== 'overseas' || country.trim()) && !submitting;
-  // まだ入っていない必須項目（ボタンの上に出す）
-  const missing = [
-    !message.trim() && 'おすすめの場所',
-    !prefecture && 'どこ？',
-    prefecture === 'overseas' && !country.trim() && '国・地域',
-    tags.length === 0 && 'ジャンル',
-    !penname.trim() && 'ペンネーム',
-  ].filter(Boolean);
   // 入力中の内容で「こんなふうに表示されます」の見本を作る
   const previewPost = (message.trim() || photos.length > 0) && {
     id: 'preview', penname: penname.trim() || 'あなた', message: message.trim() || '（おすすめの場所を書くとここに出ます）',
@@ -1678,7 +1670,6 @@ function PostForm({ onSubmit, onCancel, hideBack = false, stores, tags: availabl
       </div>
 
       <div className="mm-form-submit">
-        {missing.length > 0 && !submitting && <p>あと：{missing.join('・')}</p>}
         <button type="button" onClick={handleSubmit} disabled={!canSubmit} className="mm-btn primary mm-btn-lg">
           <span>{submitting ? '投稿しています…' : '投稿する'}</span>
           {!submitting && <Icon name="arrow"/>}
@@ -1729,8 +1720,9 @@ function MapView({ posts, addPost, updatePost, stores, tags, settings, updateSet
   // スマホ(mobile)は「マップは一番上に戻れば見える」ページスクロール前提なので触らない。
   // 掲示板・管理・QR・投稿フォームは minHeight:100vh でスクロールが要るため、
   // body への lock はこの画面が表示されている間に限定する。
+  // PCで「投稿する」を押すと、この画面の中で投稿フォームに切り替わるので、その間も止めない
   useEffect(() => {
-    if (mobile) return;
+    if (mobile || showForm) return;
     const body = document.body;
     const keys = ['position', 'top', 'left', 'right', 'width', 'overflow'];
     const prev = Object.fromEntries(keys.map(k => [k, body.style[k]]));
@@ -1750,7 +1742,7 @@ function MapView({ posts, addPost, updatePost, stores, tags, settings, updateSet
       keys.forEach(k => { body.style[k] = prev[k]; });
       window.scrollTo(0, y);
     };
-  }, [mobile]);
+  }, [mobile, showForm]);
 
   // ピンドラッグ：地図の座標系での相対位置(0-1)に変換して保存
   const handlePinDrag = useCallback((key, clientX, clientY) => {
@@ -3554,8 +3546,12 @@ function PostDetailModal({ post, updatePost, tagMap, onClose, requestPhotos, foc
   return (
     <div style={s.modalOverlay} onClick={onClose}>
       <div className="mn-modal" style={{ ...s.modal, maxWidth: 460, position: 'relative' }} onClick={(e) => e.stopPropagation()}>
-        <button type="button" onClick={onClose} aria-label="閉じる" className="mm-iconbtn"
-          style={{ position: 'absolute', top: 10, right: 10, zIndex: 1, width: 40, height: 40 }}><Icon name="x"/></button>
+        {/* ✕は中身をスクロールしても上に残す（高さ0の帯を上に貼り付け、その右端に置く）。
+            貼り付く位置は余白32pxの内側から測られるので top:-22 で枠の上から10pxに。下の行の位置は変えない */}
+        <div style={{ position: 'sticky', top: -22, zIndex: 1, height: 0, margin: '-22px -22px 22px 0', display: 'flex', justifyContent: 'flex-end' }}>
+          <button type="button" onClick={onClose} aria-label="閉じる" className="mm-iconbtn"
+            style={{ width: 40, height: 40, flexShrink: 0, boxShadow: '0 2px 8px rgba(0,0,0,.12)' }}><Icon name="x"/></button>
+        </div>
 
         <div style={{ display: 'flex', justifyContent: 'flex-end', marginBottom: 12, paddingRight: 44 }}>
           <span style={{ fontFamily: FONT_HAND, fontSize: '0.75rem', color: C.inkSub, fontStyle: 'italic' }}>— {post.penname}</span>
@@ -4463,6 +4459,9 @@ function Spotlight({ posts, tagMap, requestPhotos, onOpen, onFocus }) {
   // 上の切り替え処理より後に置く（切り替え直前の写真位置を覚えておき、消えていく投稿をその位置のまま出す）
   useEffect(() => { lastSlide.current = slide; });
 
+  // 矢印で前後の投稿へ。送った投稿は最初から表示し直す
+  const go = (d) => { setIdx(i => ((i % n) + d + n) % n); setElapsed(0); };
+
   if (!cur) return null;
   return (
     <div ref={stageRef} className="mm-spot-stage" onMouseEnter={() => setHover(true)} onMouseLeave={() => setHover(false)}>
@@ -4472,6 +4471,11 @@ function Spotlight({ posts, tagMap, requestPhotos, onOpen, onFocus }) {
       )}
       <SpotCard key={cur.id} post={cur} tagMap={tagMap} slide={slide} progress={elapsed / dur}
         index={idx % n} total={n} onOpen={onOpen}/>
+      {/* 小さい矢印で前後の投稿に送れる。カードの左右の真ん中に置く（右下は画面切り替えのボタンと重なるため） */}
+      {n > 1 && <>
+        <button type="button" className="mm-spot-nav is-prev" aria-label="前の投稿" onClick={() => go(-1)}>‹</button>
+        <button type="button" className="mm-spot-nav is-next" aria-label="次の投稿" onClick={() => go(1)}>›</button>
+      </>}
     </div>
   );
 }
@@ -7965,8 +7969,9 @@ if (typeof document !== 'undefined' && !document.getElementById('mn-global-style
        未対応ブラウザは 100vh にフォールバックする */
     .mn-screen { height: 100vh; }
     /* iPhoneのホームバーに「閉じる」が隠れないよう下端に余白を足す。
-       dvh 未対応ブラウザは 90vh にフォールバック */
-    .mn-modal { max-height: 90vh; max-height: 90dvh;
+       高さは vh / dvh ではなく背景（実際に見えている範囲いっぱい）に対する割合にする。
+       vh だとアドレスバー等が出ているときに見える範囲より高くなり、上の✕が隠れる */
+    .mn-modal { max-height: 90% !important;
       padding-bottom: calc(32px + env(safe-area-inset-bottom, 0px)) !important; }
     @supports (height: 100svh) { .mn-screen { height: 100svh; } }
     @keyframes pulse { 0%, 100% { opacity: 1; transform: scale(1); } 50% { opacity: 0.4; transform: scale(1.3); } }
@@ -8141,6 +8146,12 @@ if (typeof document !== 'undefined' && !document.getElementById('mn-global-style
     .mm-spot-prog { display:flex; align-items:center; gap:12px; margin-top:16px; font-size:13px; font-weight:700; color:var(--mm-ink3); }
     .mm-spot.is-wide .mm-spot-prog { margin-top:14px; }
     .mm-spot-bar { flex:1; height:4px; border-radius:4px; background:var(--mm-line); overflow:hidden; }
+    .mm-spot-nav { position:absolute; top:50%; z-index:3; display:grid; place-items:center; width:34px; height:34px; margin-top:-17px; padding:0 0 3px;
+      border:1.5px solid var(--mm-line); border-radius:50%; background:rgba(255,255,255,.94); color:var(--mm-ink2); box-shadow:0 2px 8px rgba(0,0,0,.15);
+      font-family:inherit; font-size:22px; font-weight:700; line-height:1; cursor:pointer; }
+    .mm-spot-nav.is-prev { left:-17px; }
+    .mm-spot-nav.is-next { right:-17px; }
+    .mm-spot-nav:hover { border-color:var(--mm-green); color:var(--mm-green); }
     .mm-spot-bar i { display:block; height:100%; background:var(--mm-green); transition:width .1s linear; }
     @media (prefers-reduced-motion: reduce) {
       .mm-spot, .mm-spot-body > *, .mm-spot-place, .mm-spot-img { animation:none !important; }
@@ -8259,7 +8270,6 @@ if (typeof document !== 'undefined' && !document.getElementById('mn-global-style
     .mm-card.is-preview { cursor:default; border:1.5px solid var(--mm-green); }
     .mm-form-submit { position:sticky; bottom:0; z-index:20; padding:14px 16px calc(14px + env(safe-area-inset-bottom,0px));
       background:linear-gradient(rgba(250,250,247,0), var(--mm-bg2) 30%); }
-    .mm-form-submit p { margin:0 0 6px; text-align:center; font-size:12px; font-weight:700; color:var(--mm-pink); }
     .mm-form-submit .mm-btn { width:100%; height:54px; font-size:17px; }
     .mm-form-done { padding:90px 24px; text-align:center; }
     .mm-form-done h2 { margin:18px 0 8px; font-size:26px; letter-spacing:.06em; animation:mmUp .6s ease .5s both; }
